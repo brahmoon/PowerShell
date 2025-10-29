@@ -253,8 +253,11 @@ public class AnimatedDockableForm : Form
     private bool _showStandardWindowButtons = false;
     private Timer _mouseTrackTimer = new Timer();
     private Timer _hideDelayTimer = new Timer();
+    private Timer _showDelayTimer = new Timer();
     private bool _mouseLeavePending = false;
+    private bool _showDelayPending = false;
     private int _hideDelayMilliseconds = 1000; // 1秒の遅延
+    private int _showDelayMilliseconds = 1000; // 1秒の遅延
     private NotifyIcon _notifyIcon = new NotifyIcon();
     private Point _dragStartPoint;
     private bool _isDragging = false;
@@ -406,7 +409,11 @@ public class AnimatedDockableForm : Form
     public int HideDelayMilliseconds
     {
         get { return _hideDelayMilliseconds; }
-        set { _hideDelayMilliseconds = value; }
+        set
+        {
+            _hideDelayMilliseconds = value;
+            _hideDelayTimer.Interval = _hideDelayMilliseconds;
+        }
     }
 
     public void SetTriggerArea(int x, int y, int width, int height)
@@ -431,6 +438,7 @@ public class AnimatedDockableForm : Form
         InitializeForm();
         InitializeComponents();
         InitializeHideDelay();
+        InitializeShowDelay();
         
         // リサイズ機能とマウストラッキングの初期化
         InitializeResizeCapability();
@@ -507,7 +515,14 @@ public class AnimatedDockableForm : Form
         _hideDelayTimer.Tick += HideDelayTimer_Tick;
         _hideDelayTimer.Enabled = false;
     }
-    
+
+    private void InitializeShowDelay()
+    {
+        _showDelayTimer.Interval = _showDelayMilliseconds;
+        _showDelayTimer.Tick += ShowDelayTimer_Tick;
+        _showDelayTimer.Enabled = false;
+    }
+
     // 遅延タイマーのTickイベントハンドラ
     private void HideDelayTimer_Tick(object sender, EventArgs e)
     {
@@ -517,11 +532,17 @@ public class AnimatedDockableForm : Form
         // 遅延後もまだマウスがフォーム外にあるか確認
         if (_mouseLeavePending && !IsMouseInForm() && this.Visible && !_animationEngine.IsRunning)
         {
+            if (_showDelayTimer.Enabled || _showDelayPending)
+            {
+                _showDelayTimer.Stop();
+                _showDelayPending = false;
+            }
+
             // アニメーションで閉じる
             _shouldHideWhenAnimationComplete = true;
-            StartHeightAnimation(false);
+            StartHeightAnimation(false, this.Height);
             _statusLabel.Text = "フォームの外に出ました (1秒経過)";
-            
+
             // 保留フラグをクリア
             _mouseLeavePending = false;
         }
@@ -532,84 +553,102 @@ public class AnimatedDockableForm : Form
         }
     }
     
-    
-    private void StartHeightAnimation(bool isOpening)
+    private void ShowDelayTimer_Tick(object sender, EventArgs e)
+    {
+        _showDelayTimer.Stop();
+
+        if (!_showDelayPending)
+            return;
+
+        _showDelayPending = false;
+
+        if (_pinMode != PinMode.None || _isFullScreen)
+            return;
+
+        if (!this.Visible && IsMouseInTriggerArea())
+        {
+            int currentHeight = Math.Max(0, Math.Min(this.Height, _originalHeight));
+            this.Height = currentHeight;
+            this.Show();
+            this.BringToFront();
+            StartHeightAnimation(true, currentHeight);
+            _statusLabel.Text = "トリガーエリアに入りました (遅延後に開きました)";
+        }
+    }
+
+
+    private void StartHeightAnimation(bool isOpening, int? startHeightOverride = null)
     {
         // アニメーションが実行中なら一旦停止
         if (_animationEngine.IsRunning)
         {
             _animationEngine.Stop();
         }
-        
+
         // 閉じるアニメーション実行中フラグの設定
         _isClosingAnimation = !isOpening;
-        
-        if (isOpening)
+
+        int initialHeight = startHeightOverride.HasValue ? startHeightOverride.Value : this.Height;
+        initialHeight = Math.Max(0, Math.Min(initialHeight, _originalHeight));
+        int targetHeight = isOpening ? _originalHeight : 0;
+
+        if (initialHeight == targetHeight)
+        {
+            this.Height = targetHeight;
+            _isClosingAnimation = false;
+
+            if (!isOpening && _shouldHideWhenAnimationComplete)
+            {
+                this.Hide();
+                _shouldHideWhenAnimationComplete = false;
+            }
+
+            return;
+        }
+
+        bool resumeLayoutAfterAnimation = false;
+
+        if (!_suspendLayout)
         {
             // リサイズ中のレイアウト更新を一時停止
             SuspendLayout();
             _suspendLayout = true;
-            
-            // 表示（開く）アニメーション
-            _animationEngine.Start(
-                // 更新処理
-                (progress) => {
-                    int targetHeight = (int)(progress * _originalHeight);
-                    this.Height = targetHeight;
-                    
-                    // 位置更新（上部に固定）
-                    if (_dockPosition == DockPosition.Top && !_isFullScreen)
-                    {
-                        this.Location = new Point(this.Location.X, 0);
-                    }
-                },
-                // 完了時の処理
-                () => {
-                    this.Height = _originalHeight;
-                    _statusLabel.Text = "アニメーション完了";
-                    _isClosingAnimation = false;
-                    
-                    // レイアウト更新を再開
-                    if (_suspendLayout)
-                    {
-                        ResumeLayout(true);
-                        _suspendLayout = false;
-                    }
-                }
-            );
+            resumeLayoutAfterAnimation = true;
         }
-        else
-        {
-            // リサイズ中のレイアウト更新を一時停止
-            SuspendLayout();
-            _suspendLayout = true;
-            
-            // 閉じるアニメーション
-            _animationEngine.Start(
-                // 更新処理
-                (progress) => {
-                    int targetHeight = (int)(_originalHeight * (1 - progress));
-                    this.Height = targetHeight;
-                },
-                // 完了時の処理
-                () => {
-                    _isClosingAnimation = false;
-                    if (_shouldHideWhenAnimationComplete)
-                    {
-                        this.Hide();
-                        _shouldHideWhenAnimationComplete = false;
-                    }
-                    _statusLabel.Text = "閉じるアニメーション完了";
-                    
-                    // レイアウト更新を再開
-                    if (_suspendLayout)
-                    {
-                        ResumeLayout(true);
-                        _suspendLayout = false;
-                    }
+
+        _shouldHideWhenAnimationComplete = isOpening ? false : _shouldHideWhenAnimationComplete;
+
+        _animationEngine.Start(
+            // 更新処理
+            (progress) => {
+                int interpolatedHeight = (int)(initialHeight + (targetHeight - initialHeight) * progress);
+                this.Height = interpolatedHeight;
+
+                if (isOpening && _dockPosition == DockPosition.Top && !_isFullScreen)
+                {
+                    this.Location = new Point(this.Location.X, 0);
                 }
-            );
-        }
+            },
+            // 完了時の処理
+            () => {
+                this.Height = targetHeight;
+                _isClosingAnimation = false;
+
+                if (!isOpening && _shouldHideWhenAnimationComplete)
+                {
+                    this.Hide();
+                    _shouldHideWhenAnimationComplete = false;
+                }
+
+                _statusLabel.Text = isOpening ? "アニメーション完了" : "閉じるアニメーション完了";
+
+                if (resumeLayoutAfterAnimation && _suspendLayout)
+                {
+                    ResumeLayout(true);
+                    _suspendLayout = false;
+                }
+            }
+        );
     }
     
     private void ToggleFullScreenMode()
@@ -770,7 +809,7 @@ public class AnimatedDockableForm : Form
             {
                 // アニメーションで徐々に閉じる
                 _shouldHideWhenAnimationComplete = true;
-                StartHeightAnimation(false);
+                StartHeightAnimation(false, this.Height);
             }
         };
         closeButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -1252,8 +1291,14 @@ public class AnimatedDockableForm : Form
     // Event handlers - 最適化版
     private void MouseTrackTimer_Tick(object sender, EventArgs e)
     {
-        // リサイズ中やアニメーション中は処理をスキップして負荷を軽減
-        if (_isResizing || _animationEngine.IsRunning)
+        // リサイズ中は処理をスキップして負荷を軽減
+        if (_isResizing)
+            return;
+
+        bool isAnimating = _animationEngine.IsRunning;
+
+        // 開くアニメーション中は処理をスキップし、閉じるアニメーション中は再フォーカス検知のため継続
+        if (isAnimating && !_isClosingAnimation)
             return;
             
         // カーソルがトリガーエリアに入ると最前面に表示
@@ -1265,6 +1310,12 @@ public class AnimatedDockableForm : Form
             
         if (_pinMode != PinMode.None)
         {
+            if (_showDelayTimer.Enabled || _showDelayPending)
+            {
+                _showDelayTimer.Stop();
+                _showDelayPending = false;
+            }
+
             // If pinned, always show
             if (!this.Visible)
             {
@@ -1276,17 +1327,31 @@ public class AnimatedDockableForm : Form
         
         // フルスクリーンモード時はトリガーによる表示/非表示を無効化
         if (_isFullScreen)
+        {
+            if (_showDelayTimer.Enabled || _showDelayPending)
+            {
+                _showDelayTimer.Stop();
+                _showDelayPending = false;
+            }
             return;
+        }
             
         // Check if mouse is in trigger area
         if (IsMouseInTriggerArea() && !this.Visible)
         {
-            // フォームが非表示から表示されるときのアニメーション
-            this.Height = 0;
-            this.Show();
-            this.BringToFront();
-            StartHeightAnimation(true);
-            _statusLabel.Text = "トリガーエリアに入りました";
+            if (!_showDelayTimer.Enabled && !_showDelayPending)
+            {
+                _showDelayPending = true;
+                _showDelayTimer.Interval = _showDelayMilliseconds;
+                _showDelayTimer.Start();
+                _statusLabel.Text = "トリガーエリアに入りました (1秒後に開きます)";
+            }
+        }
+        else if (!IsMouseInTriggerArea() && _showDelayPending)
+        {
+            _showDelayTimer.Stop();
+            _showDelayPending = false;
+            _statusLabel.Text = "トリガーエリアから離れました (開く処理をキャンセル)";
         }
         // マウスがフォーム内にある場合
         else if (IsMouseInForm())
@@ -1295,29 +1360,19 @@ public class AnimatedDockableForm : Form
             if (_isClosingAnimation && _animationEngine.IsRunning)
             {
                 _shouldHideWhenAnimationComplete = false; // 非表示フラグをクリア
-                
-                // 現在のアニメーションを停止し、逆向きに開始
-                float currentProgress = _animationEngine.GetCurrentProgress();
-                float remainingProgress = 1.0f - currentProgress;
-                
+
                 _animationEngine.Stop();
                 _isClosingAnimation = false;
-                
-                // 現在の高さから開くアニメーションを開始
-                _animationEngine.Start(
-                    // 更新処理
-                    (progress) => {
-                        int currentHeight = this.Height;
-                        int targetHeight = (int)(_originalHeight * progress + currentHeight * (1.0f - progress));
-                        this.Height = targetHeight;
-                    },
-                    // 完了時の処理
-                    () => {
-                        this.Height = _originalHeight;
-                        _statusLabel.Text = "アニメーション方向を反転して開きました";
-                    }
-                );
+
+                int currentHeight = this.Height;
+                StartHeightAnimation(true, currentHeight);
+                _statusLabel.Text = "アニメーション方向を反転して開きました";
             }
+
+            _hideDelayTimer.Stop();
+            _mouseLeavePending = false;
+            _showDelayTimer.Stop();
+            _showDelayPending = false;
         }
         // マウスがフォーム外にある場合
         else if (!IsMouseInForm() && this.Visible && !_animationEngine.IsRunning && !_isClosingAnimation)
@@ -1336,6 +1391,8 @@ public class AnimatedDockableForm : Form
             // マウスがフォーム内に戻ってきたら遅延タイマーをキャンセル
             _hideDelayTimer.Stop();
             _mouseLeavePending = false;
+            _showDelayTimer.Stop();
+            _showDelayPending = false;
             _statusLabel.Text = "フォームに戻りました";
         }
     }
@@ -1575,6 +1632,11 @@ public class AnimatedDockableForm : Form
             {
                 _hideDelayTimer.Stop();
                 _hideDelayTimer.Dispose();
+            }
+            if (_showDelayTimer != null)
+            {
+                _showDelayTimer.Stop();
+                _showDelayTimer.Dispose();
             }
         }
         base.Dispose(disposing);
