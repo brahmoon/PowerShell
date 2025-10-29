@@ -36,3 +36,4 @@ if (-not (Test-Path -Path $ModulesPath))
 
 $form = [DockableModularForm.MainForm]::new($ModulesPath)
 [System.Windows.Forms.Application]::Run($form)
+pause
