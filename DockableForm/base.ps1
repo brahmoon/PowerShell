@@ -577,24 +577,13 @@ public class AnimatedDockableForm : Form
     }
 
 
-    private void StopAnimationAndResumeLayoutIfNeeded()
-    {
-        if (_animationEngine != null && _animationEngine.IsRunning)
-        {
-            _animationEngine.Stop();
-        }
-
-        if (_suspendLayout)
-        {
-            ResumeLayout(true);
-            _suspendLayout = false;
-        }
-    }
-
     private void StartHeightAnimation(bool isOpening, int? startHeightOverride = null)
     {
         // アニメーションが実行中なら一旦停止
-        StopAnimationAndResumeLayoutIfNeeded();
+        if (_animationEngine.IsRunning)
+        {
+            _animationEngine.Stop();
+        }
 
         // 閉じるアニメーション実行中フラグの設定
         _isClosingAnimation = !isOpening;
@@ -665,7 +654,10 @@ public class AnimatedDockableForm : Form
     private void ToggleFullScreenMode()
     {
         // アニメーションが実行中なら一旦停止
-        StopAnimationAndResumeLayoutIfNeeded();
+        if (_animationEngine.IsRunning)
+        {
+            _animationEngine.Stop();
+        }
         
         // リサイズ中のレイアウト更新を一時停止
         SuspendLayout();
@@ -1368,7 +1360,8 @@ public class AnimatedDockableForm : Form
             if (_isClosingAnimation && _animationEngine.IsRunning)
             {
                 _shouldHideWhenAnimationComplete = false; // 非表示フラグをクリア
-                StopAnimationAndResumeLayoutIfNeeded();
+
+                _animationEngine.Stop();
                 _isClosingAnimation = false;
 
                 int currentHeight = this.Height;
@@ -1453,7 +1446,7 @@ public class AnimatedDockableForm : Form
     {
         // Clean up and exit
         _mouseTrackTimer.Stop();
-        StopAnimationAndResumeLayoutIfNeeded();
+        _animationEngine.Stop();
         _notifyIcon.Visible = false;
         Application.Exit();
     }
@@ -1496,7 +1489,7 @@ public class AnimatedDockableForm : Form
                 // アニメーション実行中ならば停止
                 if (_animationEngine.IsRunning)
                 {
-                    StopAnimationAndResumeLayoutIfNeeded();
+                    _animationEngine.Stop();
                     _isClosingAnimation = false;
                     _shouldHideWhenAnimationComplete = false;
                 }
@@ -1626,7 +1619,10 @@ public class AnimatedDockableForm : Form
             {
                 _mouseTrackTimer.Dispose();
             }
-            StopAnimationAndResumeLayoutIfNeeded();
+            if (_animationEngine != null)
+            {
+                _animationEngine.Stop();
+            }
             if (_notifyIcon != null)
             {
                 _notifyIcon.Dispose();
