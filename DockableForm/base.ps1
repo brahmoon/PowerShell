@@ -297,7 +297,7 @@ public class AnimatedDockableForm : Form
 
     // リサイズ関連のフィールド
     private ResizeDirection _currentResizeDirection = ResizeDirection.None;
-    private Point _resizeStartScreenPoint;
+    private Point _resizeStartPoint;
     private Size _originalResizeSize;
     private bool _allowTopResize = false; // 上部リサイズを許可するかどうかのフラグ
     private const int RESIZE_BORDER_SIZE = 6; // リサイズ可能なボーダーの幅
@@ -577,24 +577,13 @@ public class AnimatedDockableForm : Form
     }
 
 
-    private void StopAnimationAndResumeLayoutIfNeeded()
-    {
-        if (_animationEngine != null && _animationEngine.IsRunning)
-        {
-            _animationEngine.Stop();
-        }
-
-        if (_suspendLayout)
-        {
-            ResumeLayout(true);
-            _suspendLayout = false;
-        }
-    }
-
     private void StartHeightAnimation(bool isOpening, int? startHeightOverride = null)
     {
         // アニメーションが実行中なら一旦停止
-        StopAnimationAndResumeLayoutIfNeeded();
+        if (_animationEngine.IsRunning)
+        {
+            _animationEngine.Stop();
+        }
 
         // 閉じるアニメーション実行中フラグの設定
         _isClosingAnimation = !isOpening;
@@ -665,7 +654,10 @@ public class AnimatedDockableForm : Form
     private void ToggleFullScreenMode()
     {
         // アニメーションが実行中なら一旦停止
-        StopAnimationAndResumeLayoutIfNeeded();
+        if (_animationEngine.IsRunning)
+        {
+            _animationEngine.Stop();
+        }
         
         // リサイズ中のレイアウト更新を一時停止
         SuspendLayout();
@@ -998,11 +990,10 @@ public class AnimatedDockableForm : Form
     }
     
     // 実際のリサイズ処理を行う - パフォーマンス改善版
-    private void PerformResize()
+    private void PerformResize(Point currentMousePosition)
     {
-        Point currentScreenPosition = Cursor.Position;
-        int deltaX = currentScreenPosition.X - _resizeStartScreenPoint.X;
-        int deltaY = currentScreenPosition.Y - _resizeStartScreenPoint.Y;
+        int deltaX = currentMousePosition.X - _resizeStartPoint.X;
+        int deltaY = currentMousePosition.Y - _resizeStartPoint.Y;
         
         // 最小サイズを定義
         int minWidth = 200;
@@ -1369,7 +1360,8 @@ public class AnimatedDockableForm : Form
             if (_isClosingAnimation && _animationEngine.IsRunning)
             {
                 _shouldHideWhenAnimationComplete = false; // 非表示フラグをクリア
-                StopAnimationAndResumeLayoutIfNeeded();
+
+                _animationEngine.Stop();
                 _isClosingAnimation = false;
 
                 int currentHeight = this.Height;
@@ -1454,7 +1446,7 @@ public class AnimatedDockableForm : Form
     {
         // Clean up and exit
         _mouseTrackTimer.Stop();
-        StopAnimationAndResumeLayoutIfNeeded();
+        _animationEngine.Stop();
         _notifyIcon.Visible = false;
         Application.Exit();
     }
@@ -1491,13 +1483,13 @@ public class AnimatedDockableForm : Form
             {
                 // リサイズ開始
                 _isResizing = true;
-                _resizeStartScreenPoint = Cursor.Position;
+                _resizeStartPoint = clientPoint;
                 _originalResizeSize = this.Size;
                 
                 // アニメーション実行中ならば停止
                 if (_animationEngine.IsRunning)
                 {
-                    StopAnimationAndResumeLayoutIfNeeded();
+                    _animationEngine.Stop();
                     _isClosingAnimation = false;
                     _shouldHideWhenAnimationComplete = false;
                 }
@@ -1516,8 +1508,22 @@ public class AnimatedDockableForm : Form
     {
         if (_isResizing)
         {
+            // マウス位置をフォームのクライアント座標に変換
+            Control control = sender as Control;
+            Point clientPoint;
+            
+            // 送信元がフォーム自体ならそのまま使用、そうでなければ変換
+            if (control == this)
+            {
+                clientPoint = e.Location;
+            }
+            else
+            {
+                clientPoint = this.PointToClient(control.PointToScreen(e.Location));
+            }
+            
             // リサイズ中
-            PerformResize();
+            PerformResize(clientPoint);
         }
         else if (_isDragging)
         {
@@ -1613,7 +1619,10 @@ public class AnimatedDockableForm : Form
             {
                 _mouseTrackTimer.Dispose();
             }
-            StopAnimationAndResumeLayoutIfNeeded();
+            if (_animationEngine != null)
+            {
+                _animationEngine.Stop();
+            }
             if (_notifyIcon != null)
             {
                 _notifyIcon.Dispose();
