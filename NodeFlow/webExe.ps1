@@ -1,120 +1,117 @@
-﻿Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# --- 子プロセス呼び出し用クラス（Bridge） ---
 $csCode = @"
 using System;
-using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 [ComVisible(true)]
-public class NodeBridge {
-    public void Execute(string json) {
-        try {
-            // JSONを一時ファイルに保存
-            string temp = Path.Combine(Path.GetTempPath(), "node_" + Guid.NewGuid().ToString("N") + ".json");
-            File.WriteAllText(temp, json);
+public class NodeBridge
+{
+    private static string Escape(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
 
-            // 子プロセスPowerShellにスクリプト文字列を直接渡す
-            string script = @"
-                try {
-                    \$json = Get-Content '$temp' -Raw | ConvertFrom-Json
-                    switch (\$json.op) {
-                        'add' { \$r = \$json.a + \$json.b }
-                        'sub' { \$r = \$json.a - \$json.b }
-                        'mul' { \$r = \$json.a * \$json.b }
-                        'div' { 
-                            if (\$json.b -eq 0) { throw 'Division by zero' }
-                            \$r = \$json.a / \$json.b 
-                        }
-                        default { throw ('Unknown operation: ' + \$json.op) }
-                    }
-                    [pscustomobject]@{status='ok';op=\$json.op;result=\$r} | ConvertTo-Json -Compress
-                } catch {
-                    [pscustomobject]@{status='error';message=\$_.Exception.Message} | ConvertTo-Json -Compress
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\r", "\\r")
+            .Replace("\n", "\\n");
+    }
+
+    public string RunPowerShell(string script)
+    {
+        if (string.IsNullOrWhiteSpace(script))
+        {
+            return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"Script is empty.\"}";
+        }
+
+        string tempFile = Path.Combine(Path.GetTempPath(), "nodeflow_" + Guid.NewGuid().ToString("N") + ".ps1");
+
+        try
+        {
+            File.WriteAllText(tempFile, script ?? string.Empty);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + tempFile + "\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using (var process = Process.Start(psi))
+            {
+                if (process == null)
+                {
+                    return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"Failed to start PowerShell process.\"}";
                 }
-            ";
 
-            var psi = new ProcessStartInfo();
-            psi.FileName = "powershell.exe";
-            psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \"" + script.Replace("\"","\\\"") + "\"";
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
+                string stdout = process.StandardOutput.ReadToEnd();
+                string stderr = process.StandardError.ReadToEnd();
+                process.WaitForExit();
 
-            using (var proc = Process.Start(psi)) {
-                string output = proc.StandardOutput.ReadToEnd();
-                string error = proc.StandardError.ReadToEnd();
-                proc.WaitForExit();
-
-                try { File.Delete(temp); } catch {}
-
-                if (!string.IsNullOrWhiteSpace(error)) {
-                    MessageBox.Show("Error: " + error, "Executor Error");
-                } else {
-                    MessageBox.Show("Result: " + output, "Executor Result");
+                return "{\"exitCode\":" + process.ExitCode + ",\"stdout\":\"" + Escape(stdout) + "\",\"stderr\":\"" + Escape(stderr) + "\"}";
+            }
+        }
+        catch (Exception ex)
+        {
+            return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"" + Escape(ex.Message) + "\"}";
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempFile))
+                {
+                    File.Delete(tempFile);
                 }
             }
-        } catch (Exception ex) {
-            MessageBox.Show("Execution failed: " + ex.Message, "Bridge Error");
+            catch
+            {
+                // ignore cleanup errors
+            }
         }
     }
 }
 "@
 
-# コンパイル
-Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.ComponentModel, System.Core, System.Drawing.Design
+Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core
 
-# --- フォーム構築 ---
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Node Editor Host"
-$form.Size = New-Object System.Drawing.Size(900,600)
+$form.Text = "NodeFlow"
+$form.Size = New-Object System.Drawing.Size(1200, 800)
 $form.StartPosition = "CenterScreen"
 
-$wb = New-Object System.Windows.Forms.WebBrowser
-$wb.Dock = "Fill"
-$wb.ScriptErrorsSuppressed = $true
-$wb.ObjectForScripting = (New-Object NodeBridge)
+$browser = New-Object System.Windows.Forms.WebBrowser
+$browser.Dock = "Fill"
+$browser.ScriptErrorsSuppressed = $true
+$browser.AllowWebBrowserDrop = $false
+$browser.IsWebBrowserContextMenuEnabled = $false
+$browser.WebBrowserShortcutsEnabled = $true
+$browser.ObjectForScripting = (New-Object NodeBridge)
 
-# --- HTML ---
-$html = @"
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset='utf-8'>
-<title>Node Editor Demo</title>
-<style>
-body { font-family: sans-serif; margin: 20px; }
-textarea { width: 100%; height: 100px; }
-button { padding: 6px 12px; margin-top: 8px; }
-</style>
-</head>
-<body>
-<h2>Node Execution (Direct Child Process)</h2>
-<textarea id='nodejson'>{ "op":"mul", "a":3, "b":4 }</textarea><br>
-<button onclick='runNode()'>Execute Node</button>
-<div id='log' style='margin-top:12px;border:1px solid #ccc;padding:8px;'></div>
-<script>
-function log(msg){
-  document.getElementById('log').innerHTML += msg + '<br>';
+$indexPath = Join-Path $PSScriptRoot 'index.html'
+if (-not (Test-Path $indexPath)) {
+    [System.Windows.Forms.MessageBox]::Show("index.html が見つかりません: $indexPath", "NodeFlow", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    return
 }
-function runNode(){
-  var node = document.getElementById('nodejson').value;
-  log('Executing: ' + node);
-  if(window.external && window.external.Execute){
-    window.external.Execute(node);
-  } else {
-    log('Bridge not available.');
-  }
-}
-</script>
-</body>
-</html>
-"@
 
-$wb.DocumentText = $html
-$form.Controls.Add($wb)
-$form.ShowDialog()
+$uri = New-Object System.Uri((Resolve-Path $indexPath).ProviderPath)
+$browser.Url = $uri
+
+$form.Controls.Add($browser)
+$form.Add_Shown({ $form.Activate() })
+
+$form.ShowDialog() | Out-Null
+$form.Dispose()

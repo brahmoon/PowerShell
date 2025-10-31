@@ -18,6 +18,7 @@
         <button id="save-flow" type="button">Save</button>
         <button id="clear-flow" type="button">Clear</button>
         <button id="export-script" class="primary" type="button">Export Script</button>
+        <button id="run-script" class="primary" type="button">Run Script</button>
       </div>
     </header>
 
@@ -212,6 +213,42 @@
 
       let customSpecs = listCustomNodeSpecs();
       let editor;
+      const parseBridgeResponse = (raw) => {
+        if (!raw) {
+          return { exitCode: -1, stdout: '', stderr: 'PowerShell bridge returned no data.' };
+        }
+        if (typeof raw !== 'string') {
+          return { exitCode: -1, stdout: '', stderr: 'Unexpected response type from PowerShell bridge.' };
+        }
+        try {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed === 'object' && parsed !== null) {
+            return {
+              exitCode: typeof parsed.exitCode === 'number' ? parsed.exitCode : 0,
+              stdout: typeof parsed.stdout === 'string' ? parsed.stdout : '',
+              stderr: typeof parsed.stderr === 'string' ? parsed.stderr : '',
+            };
+          }
+        } catch (error) {
+          return { exitCode: -1, stdout: raw, stderr: `Failed to parse response: ${error.message}` };
+        }
+        return { exitCode: 0, stdout: raw, stderr: '' };
+      };
+
+      const executeWithPowerShell = (script) => {
+        if (!script) {
+          return { exitCode: -1, stdout: '', stderr: '生成されたスクリプトが空です。' };
+        }
+        if (!window.external || typeof window.external.RunPowerShell !== 'function') {
+          return { exitCode: -1, stdout: '', stderr: 'PowerShell ブリッジが利用できません。' };
+        }
+        try {
+          const response = window.external.RunPowerShell(script);
+          return parseBridgeResponse(response);
+        } catch (error) {
+          return { exitCode: -1, stdout: '', stderr: error.message };
+        }
+      };
 
       const showToast = (message) => {
         if (!message) return;
@@ -686,6 +723,31 @@
       window.addEventListener('resize', () => editor.resize());
 
       document.getElementById('export-script').addEventListener('click', () => editor.exportScript());
+      document.getElementById('run-script').addEventListener('click', () => {
+        if (!editor) {
+          return;
+        }
+        let builtScript = '';
+        try {
+          builtScript = editor.generateScript();
+        } catch (error) {
+          alert(error.message);
+          return;
+        }
+
+        const result = executeWithPowerShell(builtScript);
+        if (result.stderr) {
+          alert(`PowerShell 実行時にエラーが発生しました (exit ${result.exitCode ?? 'unknown'}):\n${result.stderr}`);
+          return;
+        }
+
+        const output = (result.stdout || '').trim();
+        if (output) {
+          alert(output);
+        } else {
+          showToast('PowerShell スクリプトを実行しました。');
+        }
+      });
       document.getElementById('save-flow').addEventListener('click', () => editor.persistGraph());
       document.getElementById('load-flow').addEventListener('click', () => editor.restoreGraph());
       document.getElementById('clear-flow').addEventListener('click', () => editor.clearGraph());
