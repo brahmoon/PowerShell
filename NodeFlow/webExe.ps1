@@ -1,120 +1,229 @@
-﻿Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# --- 子プロセス呼び出し用クラス（Bridge） ---
-$csCode = @"
-using System;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
-using System.IO;
-using System.Windows.Forms;
+function Get-WebView2AssemblyInfo {
+    param(
+        [string[]]$HintDirectories = @()
+    )
 
-[ComVisible(true)]
-public class NodeBridge {
-    public void Execute(string json) {
-        try {
-            // JSONを一時ファイルに保存
-            string temp = Path.Combine(Path.GetTempPath(), "node_" + Guid.NewGuid().ToString("N") + ".json");
-            File.WriteAllText(temp, json);
+    $candidates = @()
 
-            // 子プロセスPowerShellにスクリプト文字列を直接渡す
-            string script = @"
-                try {
-                    \$json = Get-Content '$temp' -Raw | ConvertFrom-Json
-                    switch (\$json.op) {
-                        'add' { \$r = \$json.a + \$json.b }
-                        'sub' { \$r = \$json.a - \$json.b }
-                        'mul' { \$r = \$json.a * \$json.b }
-                        'div' { 
-                            if (\$json.b -eq 0) { throw 'Division by zero' }
-                            \$r = \$json.a / \$json.b 
-                        }
-                        default { throw ('Unknown operation: ' + \$json.op) }
-                    }
-                    [pscustomobject]@{status='ok';op=\$json.op;result=\$r} | ConvertTo-Json -Compress
-                } catch {
-                    [pscustomobject]@{status='error';message=\$_.Exception.Message} | ConvertTo-Json -Compress
-                }
-            ";
+    foreach ($hint in $HintDirectories) {
+        if ($hint -and (Test-Path $hint)) {
+            $candidates += (Get-Item $hint).FullName
+        }
+    }
 
-            var psi = new ProcessStartInfo();
-            psi.FileName = "powershell.exe";
-            psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \"" + script.Replace("\"","\\\"") + "\"";
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
+    $programFilesRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ -and (Test-Path $_) }
+    foreach ($root in $programFilesRoots) {
+        foreach ($suffix in @('Microsoft\EdgeWebView\Application', 'Microsoft\Edge\Application')) {
+            $path = Join-Path $root $suffix
+            if (Test-Path $path) {
+                $candidates += $path
+            }
+        }
+    }
 
-            using (var proc = Process.Start(psi)) {
-                string output = proc.StandardOutput.ReadToEnd();
-                string error = proc.StandardError.ReadToEnd();
-                proc.WaitForExit();
+    $candidates = $candidates | Select-Object -Unique
+    foreach ($candidate in $candidates) {
+        $versionDirs = Get-ChildItem -Path $candidate -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
+        foreach ($version in $versionDirs) {
+            $winForms = Join-Path $version.FullName 'Microsoft.Web.WebView2.WinForms.dll'
+            $core = Join-Path $version.FullName 'Microsoft.Web.WebView2.Core.dll'
+            $loader = Join-Path $version.FullName 'WebView2Loader.dll'
 
-                try { File.Delete(temp); } catch {}
-
-                if (!string.IsNullOrWhiteSpace(error)) {
-                    MessageBox.Show("Error: " + error, "Executor Error");
-                } else {
-                    MessageBox.Show("Result: " + output, "Executor Result");
+            if ((Test-Path $winForms) -and (Test-Path $core)) {
+                return [PSCustomObject]@{
+                    WinForms       = (Get-Item $winForms).FullName
+                    Core           = (Get-Item $core).FullName
+                    Loader         = if (Test-Path $loader) { (Get-Item $loader).FullName } else { $null }
+                    LoaderRootPath = $version.FullName
                 }
             }
-        } catch (Exception ex) {
-            MessageBox.Show("Execution failed: " + ex.Message, "Bridge Error");
+        }
+    }
+
+    return $null
+}
+
+$localWebViewFolder = Join-Path $PSScriptRoot 'WebView2'
+$assemblyInfo = Get-WebView2AssemblyInfo -HintDirectories @($localWebViewFolder)
+
+if (-not $assemblyInfo) {
+    [System.Windows.Forms.MessageBox]::Show(
+        'WebView2 ランタイムまたはライブラリが見つかりませんでした。Microsoft Edge WebView2 ランタイムをインストールしてください。',
+        'NodeFlow',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+    return
+}
+
+if ($assemblyInfo.LoaderRootPath) {
+    $loaderDirectory = $assemblyInfo.LoaderRootPath
+    if ($loaderDirectory -and (Test-Path $loaderDirectory)) {
+        $currentPath = [System.Environment]::GetEnvironmentVariable('PATH')
+        if ($currentPath -notlike "*$loaderDirectory*") {
+            [System.Environment]::SetEnvironmentVariable('PATH', "$loaderDirectory;$currentPath")
+        }
+    }
+}
+
+Add-Type -Path $assemblyInfo.WinForms
+Add-Type -Path $assemblyInfo.Core
+
+$csCode = @"
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+
+[ComVisible(true)]
+[ClassInterface(ClassInterfaceType.AutoDual)]
+public class NodeBridge
+{
+    private static string Escape(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\r", "\\r")
+            .Replace("\n", "\\n");
+    }
+
+    public string RunPowerShell(string script)
+    {
+        if (string.IsNullOrWhiteSpace(script))
+        {
+            return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"Script is empty.\"}";
+        }
+
+        string tempFile = Path.Combine(Path.GetTempPath(), "nodeflow_" + Guid.NewGuid().ToString("N") + ".ps1");
+
+        try
+        {
+            File.WriteAllText(tempFile, script ?? string.Empty);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + tempFile + "\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using (var process = Process.Start(psi))
+            {
+                if (process == null)
+                {
+                    return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"Failed to start PowerShell process.\"}";
+                }
+
+                string stdout = process.StandardOutput.ReadToEnd();
+                string stderr = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+
+                return "{\"exitCode\":" + process.ExitCode + ",\"stdout\":\"" + Escape(stdout) + "\",\"stderr\":\"" + Escape(stderr) + "\"}";
+            }
+        }
+        catch (Exception ex)
+        {
+            return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"" + Escape(ex.Message) + "\"}";
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempFile))
+                {
+                    File.Delete(tempFile);
+                }
+            }
+            catch
+            {
+                // ignore cleanup errors
+            }
         }
     }
 }
 "@
 
-# コンパイル
-Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.ComponentModel, System.Core, System.Drawing.Design
+Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core
 
-# --- フォーム構築 ---
+[System.Windows.Forms.Application]::EnableVisualStyles()
+[System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
+
+$indexPath = Join-Path $PSScriptRoot 'index.html'
+if (-not (Test-Path $indexPath)) {
+    [System.Windows.Forms.MessageBox]::Show(
+        "index.html が見つかりません: $indexPath",
+        'NodeFlow',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+    return
+}
+
+$resolvedIndexPath = (Resolve-Path $indexPath).ProviderPath
+
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Node Editor Host"
-$form.Size = New-Object System.Drawing.Size(900,600)
-$form.StartPosition = "CenterScreen"
+$form.Text = 'NodeFlow'
+$form.Size = New-Object System.Drawing.Size(1200, 800)
+$form.StartPosition = 'CenterScreen'
 
-$wb = New-Object System.Windows.Forms.WebBrowser
-$wb.Dock = "Fill"
-$wb.ScriptErrorsSuppressed = $true
-$wb.ObjectForScripting = (New-Object NodeBridge)
+$webView = New-Object Microsoft.Web.WebView2.WinForms.WebView2
+$webView.Dock = 'Fill'
+$webView.DefaultBackgroundColor = [System.Drawing.Color]::FromArgb(255, 24, 24, 24)
+$form.Controls.Add($webView)
 
-# --- HTML ---
-$html = @"
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset='utf-8'>
-<title>Node Editor Demo</title>
-<style>
-body { font-family: sans-serif; margin: 20px; }
-textarea { width: 100%; height: 100px; }
-button { padding: 6px 12px; margin-top: 8px; }
-</style>
-</head>
-<body>
-<h2>Node Execution (Direct Child Process)</h2>
-<textarea id='nodejson'>{ "op":"mul", "a":3, "b":4 }</textarea><br>
-<button onclick='runNode()'>Execute Node</button>
-<div id='log' style='margin-top:12px;border:1px solid #ccc;padding:8px;'></div>
-<script>
-function log(msg){
-  document.getElementById('log').innerHTML += msg + '<br>';
+$bridge = New-Object NodeBridge
+
+try {
+    $userDataFolder = Join-Path ([System.IO.Path]::GetTempPath()) 'NodeFlowWebView2'
+    if (-not (Test-Path $userDataFolder)) {
+        [System.IO.Directory]::CreateDirectory($userDataFolder) | Out-Null
+    }
+
+    $environment = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $userDataFolder).GetAwaiter().GetResult()
+    $null = $webView.EnsureCoreWebView2Async($environment).GetAwaiter().GetResult()
+
+    $webView.CoreWebView2.AddHostObjectToScript('nodeBridge', $bridge)
+    $webView.CoreWebView2.Settings.AreDefaultScriptDialogsEnabled = $true
+    $webView.CoreWebView2.Settings.AreDevToolsEnabled = $false
+
+    $webView.Source = New-Object System.Uri($resolvedIndexPath)
 }
-function runNode(){
-  var node = document.getElementById('nodejson').value;
-  log('Executing: ' + node);
-  if(window.external && window.external.Execute){
-    window.external.Execute(node);
-  } else {
-    log('Bridge not available.');
-  }
+catch {
+    [System.Windows.Forms.MessageBox]::Show(
+        "WebView2 の初期化に失敗しました: $($_.Exception.Message)",
+        'NodeFlow',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+    $webView.Dispose()
+    $form.Dispose()
+    return
 }
-</script>
-</body>
-</html>
-"@
 
-$wb.DocumentText = $html
-$form.Controls.Add($wb)
-$form.ShowDialog()
+$form.Add_Shown({ param($sender, $args) $sender.Activate() })
+$form.Add_FormClosed({
+    param($sender, $args)
+    try {
+        if ($webView.CoreWebView2) {
+            $webView.CoreWebView2.RemoveHostObjectFromScript('nodeBridge')
+        }
+    } catch {
+        # ignore teardown failures
+    }
+    $webView.Dispose()
+})
+
+$form.ShowDialog() | Out-Null
+$form.Dispose()
