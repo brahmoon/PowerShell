@@ -18,7 +18,6 @@
         <button id="save-flow" type="button">Save</button>
         <button id="clear-flow" type="button">Clear</button>
         <button id="export-script" class="primary" type="button">Export Script</button>
-        <button id="run-script" class="primary" type="button">Run Script</button>
       </div>
     </header>
 
@@ -213,7 +212,6 @@
 
       let customSpecs = listCustomNodeSpecs();
       let editor;
-      let lastGeneratedScript = '';
 
       const showToast = (message) => {
         if (!message) return;
@@ -638,25 +636,6 @@
         setTimeout(() => editor?.resize(), 260);
       };
 
-      const handleGeneratedScript = (script) => {
-        lastGeneratedScript = script;
-        exportScript(script);
-      };
-
-      const invokeHostScript = (script) => {
-        const host = window.external;
-        if (!host || typeof host.RunScript !== 'function') {
-          alert('PowerShell 実行ホストが利用できません。');
-          return;
-        }
-        try {
-          host.RunScript(script);
-        } catch (invokeError) {
-          console.error('Failed to invoke host PowerShell process', invokeError);
-          alert('PowerShell 実行に失敗しました: ' + invokeError.message);
-        }
-      };
-
       editor = new NodeEditor({
         paletteEl,
         nodeLayer,
@@ -666,7 +645,7 @@
         propertyFields,
         nodeTemplate,
         library: specsToDefinitions(customSpecs),
-        onGenerateScript: handleGeneratedScript,
+        onGenerateScript: exportScript,
         onEditCustomNode: openDesignerForSpec,
         onDuplicatePaletteNode: ({ definitionId }) => {
           const saved = duplicateCustomNodeById(definitionId);
@@ -710,16 +689,6 @@
       document.getElementById('save-flow').addEventListener('click', () => editor.persistGraph());
       document.getElementById('load-flow').addEventListener('click', () => editor.restoreGraph());
       document.getElementById('clear-flow').addEventListener('click', () => editor.clearGraph());
-
-      document.getElementById('run-script').addEventListener('click', () => {
-        try {
-          const script = editor.generateScript();
-          lastGeneratedScript = script;
-          invokeHostScript(script);
-        } catch (error) {
-          alert(error.message);
-        }
-      });
 
       openDesignerBtn.addEventListener('click', openDesigner);
       closeDesignerBtn.addEventListener('click', closeDesigner);
