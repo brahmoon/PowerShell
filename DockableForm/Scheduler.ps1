@@ -17,9 +17,10 @@ using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Threading;
+using System.IO;
+using System.Web.Script.Serialization;
 
 #region DockableForm Classes
-
 // イージング関数を提供するクラス
 public static class EasingFunctions
 {
@@ -127,10 +128,11 @@ public class DoubleBufferedPanel : Panel
 // アニメーションエンジンの基本クラス（C# 5.0対応版 - 軽量化）
 public class AnimationEngine
 {
-    private System.Windows.Forms.Timer _timer;
+    private Timer _timer;
     private int _currentStep = 0;
     private int _totalSteps;
     private EasingFunctions.EasingType _easingType;
+    private bool _isCompleted = false;
     private Action<float> _updateAction;
     private Action _completedAction;
     
@@ -141,39 +143,36 @@ public class AnimationEngine
     {
         _totalSteps = (int)(durationMs / (1000.0 / fps));
         _easingType = easingType;
-        _timer = new System.Windows.Forms.Timer();
+        _timer = new Timer();
         _timer.Interval = (int)(1000.0 / fps);
         _timer.Tick += Timer_Tick;
     }
     
     private void Timer_Tick(object sender, EventArgs e)
     {
-        // アニメーションステップを進める
-        _currentStep++;
-        
-        // 進行度（0〜1の範囲）を計算
-        float progress = (float)_currentStep / _totalSteps;
-        
-        // イージング効果を適用
-        float easedProgress = EasingFunctions.ApplyEasing(progress, _easingType);
-        
-        // アニメーションを更新
-        if (_updateAction != null)
+        if (_isCompleted)
         {
-            _updateAction(easedProgress);
-        }
-        
-        // アニメーション完了判定
-        if (_currentStep >= _totalSteps)
-        {
-            _timer.Stop();
-            IsRunning = false;
-            
-            // 完了アクションがあれば実行
+            Stop();
             if (_completedAction != null)
             {
                 _completedAction();
             }
+            return;
+        }
+        
+        _currentStep++;
+        if (_currentStep >= _totalSteps)
+        {
+            _currentStep = _totalSteps;
+            _isCompleted = true;
+        }
+        
+        float progress = (float)_currentStep / _totalSteps;
+        float easedProgress = EasingFunctions.ApplyEasing(progress, _easingType);
+        
+        if (_updateAction != null)
+        {
+            _updateAction(easedProgress);
         }
     }
     
@@ -182,6 +181,7 @@ public class AnimationEngine
         if (IsRunning) return;
         
         _currentStep = 0;
+        _isCompleted = false;
         _updateAction = updateAction;
         _completedAction = completedAction;
         
@@ -215,6 +215,7 @@ public class AnimationEngine
         Stop();
         
         _currentStep = newStartStep;
+        _isCompleted = false;
         _updateAction = updateAction;
         _completedAction = completedAction;
         
@@ -263,12 +264,13 @@ public class AnimatedDockableForm : Form
     private PinMode _pinMode = PinMode.None;
     private bool _isFullScreen = false;
     private bool _showStandardWindowButtons = false;
-    private System.Windows.Forms.Timer _mouseTrackTimer = new System.Windows.Forms.Timer();
-    private System.Windows.Forms.Timer _hideDelayTimer = new System.Windows.Forms.Timer();
+    private Timer _mouseTrackTimer = new Timer();
+    private Timer _hideDelayTimer = new Timer();
+    private Timer _showDelayTimer = new Timer();
     private bool _mouseLeavePending = false;
-    private System.Windows.Forms.Timer _triggerDelayTimer;
-    private bool _triggerHoverPending = false;
+    private bool _showDelayPending = false;
     private int _hideDelayMilliseconds = 1000; // 1秒の遅延
+    private int _showDelayMilliseconds = 1000; // 1秒の遅延
     private NotifyIcon _notifyIcon = new NotifyIcon();
     private Point _dragStartPoint;
     private bool _isDragging = false;
@@ -308,7 +310,7 @@ public class AnimatedDockableForm : Form
 
     // リサイズ関連のフィールド
     private ResizeDirection _currentResizeDirection = ResizeDirection.None;
-    private Point _resizeStartPoint;
+    private Point _resizeStartScreenPoint;
     private Size _originalResizeSize;
     private bool _allowTopResize = false; // 上部リサイズを許可するかどうかのフラグ
     private const int RESIZE_BORDER_SIZE = 6; // リサイズ可能なボーダーの幅
@@ -420,7 +422,11 @@ public class AnimatedDockableForm : Form
     public int HideDelayMilliseconds
     {
         get { return _hideDelayMilliseconds; }
-        set { _hideDelayMilliseconds = value; }
+        set
+        {
+            _hideDelayMilliseconds = value;
+            _hideDelayTimer.Interval = _hideDelayMilliseconds;
+        }
     }
 
     public void SetTriggerArea(int x, int y, int width, int height)
@@ -444,8 +450,8 @@ public class AnimatedDockableForm : Form
         // 初期化処理を最適化された順序で行う
         InitializeForm();
         InitializeComponents();
-        InitializeTriggerDelay();
         InitializeHideDelay();
+        InitializeShowDelay();
         
         // リサイズ機能とマウストラッキングの初期化
         InitializeResizeCapability();
@@ -515,41 +521,6 @@ public class AnimatedDockableForm : Form
         }
     }
     
-    private void InitializeTriggerDelay()
-    {
-        // トリガー表示遅延タイマーの設定
-        _triggerDelayTimer = new System.Windows.Forms.Timer();
-        _triggerDelayTimer.Interval = 1000; // 1秒間の遅延
-        _triggerDelayTimer.Tick += TriggerDelayTimer_Tick;
-        _triggerDelayTimer.Enabled = false;
-    }
-    
-    // トリガー遅延タイマーのTickイベントハンドラ
-    private void TriggerDelayTimer_Tick(object sender, EventArgs e)
-    {
-        // タイマーを停止
-        _triggerDelayTimer.Stop();
-        
-        // 遅延後もまだマウスがトリガーエリア内にあるか確認
-        if (_triggerHoverPending && IsMouseInTriggerArea() && !this.Visible && !_animationEngine.IsRunning)
-        {
-            // フォームが非表示から表示されるときのアニメーション
-            this.Height = 0;
-            this.Show();
-            this.BringToFront();
-            StartHeightAnimation(true);
-            _statusLabel.Text = "トリガーエリアに入りました (1秒経過)";
-            
-            // 保留フラグをクリア
-            _triggerHoverPending = false;
-        }
-        else
-        {
-            // マウスが移動したか、他の条件により表示しないことに
-            _triggerHoverPending = false;
-        }
-    }
-    
     private void InitializeHideDelay()
     {
         // 遅延タイマーの設定
@@ -557,7 +528,14 @@ public class AnimatedDockableForm : Form
         _hideDelayTimer.Tick += HideDelayTimer_Tick;
         _hideDelayTimer.Enabled = false;
     }
-    
+
+    private void InitializeShowDelay()
+    {
+        _showDelayTimer.Interval = _showDelayMilliseconds;
+        _showDelayTimer.Tick += ShowDelayTimer_Tick;
+        _showDelayTimer.Enabled = false;
+    }
+
     // 遅延タイマーのTickイベントハンドラ
     private void HideDelayTimer_Tick(object sender, EventArgs e)
     {
@@ -567,11 +545,17 @@ public class AnimatedDockableForm : Form
         // 遅延後もまだマウスがフォーム外にあるか確認
         if (_mouseLeavePending && !IsMouseInForm() && this.Visible && !_animationEngine.IsRunning)
         {
+            if (_showDelayTimer.Enabled || _showDelayPending)
+            {
+                _showDelayTimer.Stop();
+                _showDelayPending = false;
+            }
+
             // アニメーションで閉じる
             _shouldHideWhenAnimationComplete = true;
-            StartHeightAnimation(false);
+            StartHeightAnimation(false, this.Height);
             _statusLabel.Text = "フォームの外に出ました (1秒経過)";
-            
+
             // 保留フラグをクリア
             _mouseLeavePending = false;
         }
@@ -582,90 +566,119 @@ public class AnimatedDockableForm : Form
         }
     }
     
-    private void StartHeightAnimation(bool isOpening)
+    private void ShowDelayTimer_Tick(object sender, EventArgs e)
     {
-        // アニメーションが実行中なら一旦停止
-        if (_animationEngine.IsRunning)
+        _showDelayTimer.Stop();
+
+        if (!_showDelayPending)
+            return;
+
+        _showDelayPending = false;
+
+        if (_pinMode != PinMode.None || _isFullScreen)
+            return;
+
+        if (!this.Visible && IsMouseInTriggerArea())
+        {
+            int currentHeight = Math.Max(0, Math.Min(this.Height, _originalHeight));
+            this.Height = currentHeight;
+            this.Show();
+            this.BringToFront();
+            StartHeightAnimation(true, currentHeight);
+            _statusLabel.Text = "トリガーエリアに入りました (遅延後に開きました)";
+        }
+    }
+
+
+    private void StopAnimationAndResumeLayoutIfNeeded()
+    {
+        if (_animationEngine != null && _animationEngine.IsRunning)
         {
             _animationEngine.Stop();
         }
-        
+
+        if (_suspendLayout)
+        {
+            ResumeLayout(true);
+            _suspendLayout = false;
+        }
+    }
+
+    private void StartHeightAnimation(bool isOpening, int? startHeightOverride = null)
+    {
+        // アニメーションが実行中なら一旦停止
+        StopAnimationAndResumeLayoutIfNeeded();
+
         // 閉じるアニメーション実行中フラグの設定
         _isClosingAnimation = !isOpening;
-        
-        if (isOpening)
+
+        int initialHeight = startHeightOverride.HasValue ? startHeightOverride.Value : this.Height;
+        initialHeight = Math.Max(0, Math.Min(initialHeight, _originalHeight));
+        int targetHeight = isOpening ? _originalHeight : 0;
+
+        if (initialHeight == targetHeight)
+        {
+            this.Height = targetHeight;
+            _isClosingAnimation = false;
+
+            if (!isOpening && _shouldHideWhenAnimationComplete)
+            {
+                this.Hide();
+                _shouldHideWhenAnimationComplete = false;
+            }
+
+            return;
+        }
+
+        bool resumeLayoutAfterAnimation = false;
+
+        if (!_suspendLayout)
         {
             // リサイズ中のレイアウト更新を一時停止
             SuspendLayout();
             _suspendLayout = true;
-            
-            // 表示（開く）アニメーション
-            _animationEngine.Start(
-                // 更新処理
-                (progress) => {
-                    int targetHeight = (int)(progress * _originalHeight);
-                    this.Height = targetHeight;
-                    
-                    // 位置更新（上部に固定）
-                    if (_dockPosition == DockPosition.Top && !_isFullScreen)
-                    {
-                        this.Location = new Point(this.Location.X, 0);
-                    }
-                },
-                // アニメーション完了時の処理
-                () => {
-                    this.Height = _originalHeight;
-                    _isClosingAnimation = false;
-                    
-                    // レイアウト更新を再開
-                    if (_suspendLayout)
-                    {
-                        ResumeLayout(true);
-                        _suspendLayout = false;
-                    }
-                }
-            );
+            resumeLayoutAfterAnimation = true;
         }
-        else
-        {
-            // リサイズ中のレイアウト更新を一時停止
-            SuspendLayout();
-            _suspendLayout = true;
-            
-            // 閉じるアニメーション
-            _animationEngine.Start(
-                // 更新処理
-                (progress) => {
-                    int targetHeight = (int)(_originalHeight * (1 - progress));
-                    this.Height = targetHeight;
-                },
-                // クローズアニメーション完了時の処理
-                () => {
-                    _isClosingAnimation = false;
-                    if (_shouldHideWhenAnimationComplete)
-                    {
-                        this.Hide();
-                        _shouldHideWhenAnimationComplete = false;
-                    }
-                    
-                    // レイアウト更新を再開
-                    if (_suspendLayout)
-                    {
-                        ResumeLayout(true);
-                        _suspendLayout = false;
-                    }
+
+        _shouldHideWhenAnimationComplete = isOpening ? false : _shouldHideWhenAnimationComplete;
+
+        _animationEngine.Start(
+            // 更新処理
+            (progress) => {
+                int interpolatedHeight = (int)(initialHeight + (targetHeight - initialHeight) * progress);
+                this.Height = interpolatedHeight;
+
+                if (isOpening && _dockPosition == DockPosition.Top && !_isFullScreen)
+                {
+                    this.Location = new Point(this.Location.X, 0);
                 }
-            );
-        }
+            },
+            // 完了時の処理
+            () => {
+                this.Height = targetHeight;
+                _isClosingAnimation = false;
+
+                if (!isOpening && _shouldHideWhenAnimationComplete)
+                {
+                    this.Hide();
+                    _shouldHideWhenAnimationComplete = false;
+                }
+
+                _statusLabel.Text = isOpening ? "アニメーション完了" : "閉じるアニメーション完了";
+
+                if (resumeLayoutAfterAnimation && _suspendLayout)
+                {
+                    ResumeLayout(true);
+                    _suspendLayout = false;
+                }
+            }
+        );
     }
     
     private void ToggleFullScreenMode()
     {
         // アニメーションが実行中なら一旦停止
-        if (_animationEngine.IsRunning)
-        {
-            _animationEngine.Stop();
-        }
+        StopAnimationAndResumeLayoutIfNeeded();
         
         // リサイズ中のレイアウト更新を一時停止
         SuspendLayout();
@@ -817,7 +830,7 @@ public class AnimatedDockableForm : Form
             {
                 // アニメーションで徐々に閉じる
                 _shouldHideWhenAnimationComplete = true;
-                StartHeightAnimation(false);
+                StartHeightAnimation(false, this.Height);
             }
         };
         closeButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -998,10 +1011,14 @@ public class AnimatedDockableForm : Form
     }
     
     // 実際のリサイズ処理を行う - パフォーマンス改善版
-    private void PerformResize(Point currentMousePosition)
+    private void PerformResize()
     {
-        int deltaX = currentMousePosition.X - _resizeStartPoint.X;
-        int deltaY = currentMousePosition.Y - _resizeStartPoint.Y;
+        Point currentScreenPosition = Cursor.Position;
+        int deltaX = currentScreenPosition.X - _resizeStartScreenPoint.X;
+        int deltaY = currentScreenPosition.Y - _resizeStartScreenPoint.Y;
+
+        int previousWidth = this.Width;
+        int previousHeight = this.Height;
         
         // 最小サイズを定義
         int minWidth = 200;
@@ -1100,6 +1117,13 @@ public class AnimatedDockableForm : Form
                 break;
         }
         
+        bool sizeChanged = this.Width != previousWidth || this.Height != previousHeight;
+
+        if (sizeChanged)
+        {
+            EnsureLayoutUpdatesDuringResize();
+        }
+
         // トリガーエリアの幅をフォームの幅に合わせる（上部ドック時）
         if (_dockPosition == DockPosition.Top)
         {
@@ -1109,6 +1133,41 @@ public class AnimatedDockableForm : Form
         
         // ステータスバーに現在のサイズを表示
         _statusLabel.Text = "サイズ変更: " + this.Width + " x " + this.Height;
+    }
+
+    private void EnsureLayoutUpdatesDuringResize()
+    {
+        bool temporarilyResumed = _suspendLayout;
+
+        if (temporarilyResumed)
+        {
+            _suspendLayout = false;
+            ResumeLayout(false);
+        }
+
+        PerformLayout();
+        this.Invalidate(true);
+
+        if (_headerPanel != null)
+        {
+            _headerPanel.Invalidate();
+        }
+
+        if (_contentPanel != null)
+        {
+            _contentPanel.Invalidate();
+        }
+
+        if (_statusLabel != null && _statusLabel.Parent != null)
+        {
+            _statusLabel.Parent.Invalidate();
+        }
+
+        if (temporarilyResumed)
+        {
+            SuspendLayout();
+            _suspendLayout = true;
+        }
     }
 
     private void SetupMouseTracking()
@@ -1299,8 +1358,14 @@ public class AnimatedDockableForm : Form
     // Event handlers - 最適化版
     private void MouseTrackTimer_Tick(object sender, EventArgs e)
     {
-        // リサイズ中やアニメーション中は処理をスキップして負荷を軽減
-        if (_isResizing || _animationEngine.IsRunning)
+        // リサイズ中は処理をスキップして負荷を軽減
+        if (_isResizing)
+            return;
+
+        bool isAnimating = _animationEngine.IsRunning;
+
+        // 開くアニメーション中は処理をスキップし、閉じるアニメーション中は再フォーカス検知のため継続
+        if (isAnimating && !_isClosingAnimation)
             return;
             
         // カーソルがトリガーエリアに入ると最前面に表示
@@ -1312,6 +1377,12 @@ public class AnimatedDockableForm : Form
             
         if (_pinMode != PinMode.None)
         {
+            if (_showDelayTimer.Enabled || _showDelayPending)
+            {
+                _showDelayTimer.Stop();
+                _showDelayPending = false;
+            }
+
             // If pinned, always show
             if (!this.Visible)
             {
@@ -1323,26 +1394,31 @@ public class AnimatedDockableForm : Form
         
         // フルスクリーンモード時はトリガーによる表示/非表示を無効化
         if (_isFullScreen)
+        {
+            if (_showDelayTimer.Enabled || _showDelayPending)
+            {
+                _showDelayTimer.Stop();
+                _showDelayPending = false;
+            }
             return;
+        }
             
         // Check if mouse is in trigger area
         if (IsMouseInTriggerArea() && !this.Visible)
         {
-            // トリガーによる表示の遅延処理
-            if (!_triggerHoverPending && !_triggerDelayTimer.Enabled)
+            if (!_showDelayTimer.Enabled && !_showDelayPending)
             {
-                // 遅延タイマーを開始
-                _triggerHoverPending = true;
-                _triggerDelayTimer.Start();
-                _statusLabel.Text = "トリガーエリアに入りました (表示まで1秒)";
+                _showDelayPending = true;
+                _showDelayTimer.Interval = _showDelayMilliseconds;
+                _showDelayTimer.Start();
+                _statusLabel.Text = "トリガーエリアに入りました (1秒後に開きます)";
             }
         }
-        else if (!IsMouseInTriggerArea() && _triggerHoverPending)
+        else if (!IsMouseInTriggerArea() && _showDelayPending)
         {
-            // マウスがトリガーエリアから出た場合は遅延タイマーをキャンセル
-            _triggerDelayTimer.Stop();
-            _triggerHoverPending = false;
-            _statusLabel.Text = "トリガーエリアから出ました";
+            _showDelayTimer.Stop();
+            _showDelayPending = false;
+            _statusLabel.Text = "トリガーエリアから離れました (開く処理をキャンセル)";
         }
         // マウスがフォーム内にある場合
         else if (IsMouseInForm())
@@ -1351,29 +1427,18 @@ public class AnimatedDockableForm : Form
             if (_isClosingAnimation && _animationEngine.IsRunning)
             {
                 _shouldHideWhenAnimationComplete = false; // 非表示フラグをクリア
-                
-                // 現在のアニメーションを停止し、逆向きに開始
-                float currentProgress = _animationEngine.GetCurrentProgress();
-                float remainingProgress = 1.0f - currentProgress;
-                
-                _animationEngine.Stop();
+                StopAnimationAndResumeLayoutIfNeeded();
                 _isClosingAnimation = false;
-                
-                // 現在の高さから開くアニメーションを開始
-                _animationEngine.Start(
-                    // 更新処理
-                    (progress) => {
-                        int currentHeight = this.Height;
-                        int targetHeight = (int)(_originalHeight * progress + currentHeight * (1.0f - progress));
-                        this.Height = targetHeight;
-                    },
-                    // 完了時の処理
-                    () => {
-                        this.Height = _originalHeight;
-                        _statusLabel.Text = "アニメーション方向を反転して開きました";
-                    }
-                );
+
+                int currentHeight = this.Height;
+                StartHeightAnimation(true, currentHeight);
+                _statusLabel.Text = "アニメーション方向を反転して開きました";
             }
+
+            _hideDelayTimer.Stop();
+            _mouseLeavePending = false;
+            _showDelayTimer.Stop();
+            _showDelayPending = false;
         }
         // マウスがフォーム外にある場合
         else if (!IsMouseInForm() && this.Visible && !_animationEngine.IsRunning && !_isClosingAnimation)
@@ -1392,6 +1457,8 @@ public class AnimatedDockableForm : Form
             // マウスがフォーム内に戻ってきたら遅延タイマーをキャンセル
             _hideDelayTimer.Stop();
             _mouseLeavePending = false;
+            _showDelayTimer.Stop();
+            _showDelayPending = false;
             _statusLabel.Text = "フォームに戻りました";
         }
     }
@@ -1445,7 +1512,7 @@ public class AnimatedDockableForm : Form
     {
         // Clean up and exit
         _mouseTrackTimer.Stop();
-        _animationEngine.Stop();
+        StopAnimationAndResumeLayoutIfNeeded();
         _notifyIcon.Visible = false;
         Application.Exit();
     }
@@ -1482,13 +1549,13 @@ public class AnimatedDockableForm : Form
             {
                 // リサイズ開始
                 _isResizing = true;
-                _resizeStartPoint = clientPoint;
+                _resizeStartScreenPoint = Cursor.Position;
                 _originalResizeSize = this.Size;
                 
                 // アニメーション実行中ならば停止
                 if (_animationEngine.IsRunning)
                 {
-                    _animationEngine.Stop();
+                    StopAnimationAndResumeLayoutIfNeeded();
                     _isClosingAnimation = false;
                     _shouldHideWhenAnimationComplete = false;
                 }
@@ -1507,22 +1574,8 @@ public class AnimatedDockableForm : Form
     {
         if (_isResizing)
         {
-            // マウス位置をフォームのクライアント座標に変換
-            Control control = sender as Control;
-            Point clientPoint;
-            
-            // 送信元がフォーム自体ならそのまま使用、そうでなければ変換
-            if (control == this)
-            {
-                clientPoint = e.Location;
-            }
-            else
-            {
-                clientPoint = this.PointToClient(control.PointToScreen(e.Location));
-            }
-            
             // リサイズ中
-            PerformResize(clientPoint);
+            PerformResize();
         }
         else if (_isDragging)
         {
@@ -1618,29 +1671,36 @@ public class AnimatedDockableForm : Form
             {
                 _mouseTrackTimer.Dispose();
             }
-            if (_animationEngine != null)
-            {
-                _animationEngine.Stop();
-            }
+            StopAnimationAndResumeLayoutIfNeeded();
             if (_notifyIcon != null)
             {
                 _notifyIcon.Dispose();
             }
-            if (_triggerDelayTimer != null)
-            {
-                _triggerDelayTimer.Stop();
-                _triggerDelayTimer.Dispose();
-            }
+            // 追加: 遅延タイマーの破棄
             if (_hideDelayTimer != null)
             {
                 _hideDelayTimer.Stop();
                 _hideDelayTimer.Dispose();
             }
+            if (_showDelayTimer != null)
+            {
+                _showDelayTimer.Stop();
+                _showDelayTimer.Dispose();
+            }
         }
         base.Dispose(disposing);
     }
+    
+    [STAThread]
+    public static void Main()
+    {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        
+        AnimatedDockableForm form = new AnimatedDockableForm();
+        Application.Run(form);
+    }
 }
-
 #endregion
 
 #region MetroUI Classes
@@ -4035,9 +4095,10 @@ namespace MetroUI
                 SubTask subTask = new SubTask();
                 _selectedTaskForMenu.SubTasks.Add(subTask);
                 _selectedTaskForMenu.ShowSubTasks = true; // 追加時は自動的に表示
-                
+
                 UpdateTaskUIItems();
                 Invalidate();
+                OnTaskChanged(EventArgs.Empty);
             }
         }
 
@@ -4122,9 +4183,10 @@ namespace MetroUI
                     subTask.Title = titleTextBox.Text;
                     subTask.IsCompleted = completedCheckbox.Checked;
                     subTask.Memo = memoTextBox.Text;
-                    
+
                     UpdateTaskUIItems();
                     Invalidate();
+                    OnTaskChanged(EventArgs.Empty);
                 }
             }
         }
@@ -4185,7 +4247,8 @@ namespace MetroUI
                     _selectedSubTaskForMemo.Memo = _memoTextBox.Text;
                 else
                     _selectedTaskForMemo.Memo = _memoTextBox.Text;
-                
+
+                OnTaskChanged(EventArgs.Empty);
                 _memoTextBox.Visible = false;
             }
             
@@ -4206,6 +4269,7 @@ namespace MetroUI
             task.ShowSubTasks = !task.ShowSubTasks;
             UpdateTaskUIItems();
             Invalidate();
+            OnTaskChanged(EventArgs.Empty);
         }
 
         /// <summary>
@@ -4516,6 +4580,7 @@ namespace MetroUI
                     if (i < item.Task.SubTasks.Count && item.SubTaskCheckBoxRects[i].Contains(e.Location))
                     {
                         item.Task.SubTasks[i].IsCompleted = !item.Task.SubTasks[i].IsCompleted;
+                        OnTaskChanged(EventArgs.Empty);
                         Invalidate();
                         return;
                     }
@@ -5250,8 +5315,8 @@ namespace MetroUI
                 // ここで明示的にアプリケーションを初期化
                 Application.DoEvents();
 
-                // サンプルデータの作成
-                AddSampleAppointments();
+                // 保存済み予定の読み込み
+                LoadAppointmentsFromStorage();
 
                 // 状態更新タイマー
                 statusUpdateTimer = new System.Windows.Forms.Timer();
@@ -5270,52 +5335,224 @@ namespace MetroUI
             }
         }
 
-        private void AddSampleAppointments()
+        private void LoadAppointmentsFromStorage()
         {
-            // 今日の予定
-            Appointment today1 = new Appointment();
-            today1.Title = "朝会";
-            today1.StartTime = DateTime.Today.AddHours(9);
-            today1.EndTime = DateTime.Today.AddHours(10);
-            calendar.AddAppointment(today1);
+            try
+            {
+                List<Appointment> storedAppointments = global::ScheduleStorage.LoadAppointments();
 
-            Appointment today2 = new Appointment();
-            today2.Title = "プロジェクトミーティング";
-            today2.StartTime = DateTime.Today.AddHours(13);
-            today2.EndTime = DateTime.Today.AddHours(14);
-            today2.NotificationMinutesBefore = 30;
-            calendar.AddAppointment(today2);
+                if (storedAppointments != null)
+                {
+                    foreach (Appointment appointment in storedAppointments)
+                    {
+                        calendar.AddAppointment(appointment);
+                    }
 
-            // 明日の予定
-            Appointment tomorrow = new Appointment();
-            tomorrow.Title = "クライアントミーティング";
-            tomorrow.StartTime = DateTime.Today.AddDays(1).AddHours(15);
-            tomorrow.EndTime = DateTime.Today.AddDays(1).AddHours(16);
-            tomorrow.NotificationMinutesBefore = 60;
-            calendar.AddAppointment(tomorrow);
-
-            // 次週の予定
-            Appointment nextWeek = new Appointment();
-            nextWeek.Title = "プロジェクト納期";
-            nextWeek.StartTime = DateTime.Today.AddDays(7).AddHours(18);
-            nextWeek.EndTime = DateTime.Today.AddDays(7).AddHours(19);
-            nextWeek.NotificationMinutesBefore = 1440; // 1日前
-            calendar.AddAppointment(nextWeek);
-
-            // 翌月の予定
-            Appointment nextMonth = new Appointment();
-            nextMonth.Title = "四半期レビュー";
-            nextMonth.StartTime = DateTime.Today.AddDays(28).AddHours(10);
-            nextMonth.EndTime = DateTime.Today.AddDays(28).AddHours(12);
-            nextMonth.NotificationMinutesBefore = 120; // 2時間前
-            calendar.AddAppointment(nextMonth);
-
-            // 状態の更新
-            calendar.UpdateAppointmentStatuses();
+                    calendar.UpdateAppointmentStatuses();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Failed to load appointments for sample form: " + ex.Message);
+            }
         }
     }
 
     #endregion
+}
+
+#endregion
+
+#region ScheduleStorage
+
+public static class ScheduleStorage
+{
+    private const string StorageFolderName = ".dockableScheduler";
+    private const string StorageFileName = "appointments.json";
+
+    public static string GetStorageDirectory()
+    {
+        string userDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string folderPath = Path.Combine(userDirectory, StorageFolderName);
+
+        if (!Directory.Exists(folderPath))
+        {
+            Directory.CreateDirectory(folderPath);
+        }
+
+        return folderPath;
+    }
+
+    public static string GetStorageFilePath()
+    {
+        return Path.Combine(GetStorageDirectory(), StorageFileName);
+    }
+
+    public static List<MetroUI.Appointment> LoadAppointments()
+    {
+        List<MetroUI.Appointment> appointments = new List<MetroUI.Appointment>();
+
+        try
+        {
+            string filePath = GetStorageFilePath();
+            if (!File.Exists(filePath))
+                return appointments;
+
+            string json = File.ReadAllText(filePath);
+            if (String.IsNullOrEmpty(json))
+                return appointments;
+
+            JavaScriptSerializer serializer = new JavaScriptSerializer();
+            List<AppointmentData> data = serializer.Deserialize<List<AppointmentData>>(json);
+
+            if (data != null)
+            {
+                foreach (AppointmentData item in data)
+                {
+                    appointments.Add(item.ToAppointment());
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("Failed to load appointments: " + ex.Message);
+        }
+
+        return appointments;
+    }
+
+    public static void SaveAppointments(List<MetroUI.Appointment> appointments)
+    {
+        try
+        {
+            if (appointments == null)
+                return;
+
+            List<AppointmentData> data = new List<AppointmentData>();
+
+            foreach (MetroUI.Appointment appointment in appointments)
+            {
+                if (appointment != null)
+                {
+                    data.Add(AppointmentData.FromAppointment(appointment));
+                }
+            }
+
+            JavaScriptSerializer serializer = new JavaScriptSerializer();
+            string json = serializer.Serialize(data);
+            string filePath = GetStorageFilePath();
+            File.WriteAllText(filePath, json);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("Failed to save appointments: " + ex.Message);
+        }
+    }
+
+    private class AppointmentData
+    {
+        public DateTime StartTime { get; set; }
+        public DateTime EndTime { get; set; }
+        public string Title { get; set; }
+        public int NotificationMinutesBefore { get; set; }
+        public bool IsCompleted { get; set; }
+        public bool IsNotified { get; set; }
+        public string Status { get; set; }
+        public string Memo { get; set; }
+        public bool ShowSubTasks { get; set; }
+        public List<SubTaskData> SubTasks { get; set; }
+
+        public static AppointmentData FromAppointment(MetroUI.Appointment appointment)
+        {
+            AppointmentData data = new AppointmentData();
+            data.StartTime = appointment.StartTime;
+            data.EndTime = appointment.EndTime;
+            data.Title = appointment.Title;
+            data.NotificationMinutesBefore = appointment.NotificationMinutesBefore;
+            data.IsCompleted = appointment.IsCompleted;
+            data.IsNotified = appointment.IsNotified;
+            data.Status = appointment.Status.ToString();
+            data.Memo = appointment.Memo;
+            data.ShowSubTasks = appointment.ShowSubTasks;
+            data.SubTasks = new List<SubTaskData>();
+
+            if (appointment.SubTasks != null)
+            {
+                foreach (MetroUI.MetroTaskManager.SubTask subTask in appointment.SubTasks)
+                {
+                    data.SubTasks.Add(SubTaskData.FromSubTask(subTask));
+                }
+            }
+
+            return data;
+        }
+
+        public MetroUI.Appointment ToAppointment()
+        {
+            MetroUI.Appointment appointment = new MetroUI.Appointment();
+            appointment.StartTime = StartTime;
+            appointment.EndTime = EndTime;
+            appointment.Title = Title;
+            appointment.NotificationMinutesBefore = NotificationMinutesBefore;
+            appointment.IsCompleted = IsCompleted;
+            appointment.IsNotified = IsNotified;
+            appointment.Status = ParseStatus(Status);
+            appointment.Memo = Memo;
+            appointment.ShowSubTasks = ShowSubTasks;
+
+            if (SubTasks != null)
+            {
+                foreach (SubTaskData subTaskData in SubTasks)
+                {
+                    MetroUI.MetroTaskManager.SubTask subTask = subTaskData.ToSubTask();
+                    appointment.SubTasks.Add(subTask);
+                }
+            }
+
+            appointment.UpdateStatus();
+            return appointment;
+        }
+
+        private static MetroUI.AppointmentStatus ParseStatus(string status)
+        {
+            if (String.IsNullOrEmpty(status))
+                return MetroUI.AppointmentStatus.Upcoming;
+
+            try
+            {
+                return (MetroUI.AppointmentStatus)Enum.Parse(typeof(MetroUI.AppointmentStatus), status);
+            }
+            catch
+            {
+                return MetroUI.AppointmentStatus.Upcoming;
+            }
+        }
+    }
+
+    private class SubTaskData
+    {
+        public string Title { get; set; }
+        public bool IsCompleted { get; set; }
+        public string Memo { get; set; }
+
+        public static SubTaskData FromSubTask(MetroUI.MetroTaskManager.SubTask subTask)
+        {
+            SubTaskData data = new SubTaskData();
+            data.Title = subTask.Title;
+            data.IsCompleted = subTask.IsCompleted;
+            data.Memo = subTask.Memo;
+            return data;
+        }
+
+        public MetroUI.MetroTaskManager.SubTask ToSubTask()
+        {
+            MetroUI.MetroTaskManager.SubTask subTask = new MetroUI.MetroTaskManager.SubTask();
+            subTask.Title = Title;
+            subTask.IsCompleted = IsCompleted;
+            subTask.Memo = Memo;
+            return subTask;
+        }
+    }
 }
 
 #endregion
@@ -5329,12 +5566,13 @@ public class DockableFormWithMetroUI
 {
     // DockableFormインスタンス
     private static AnimatedDockableForm _dockForm;
-    
+
     // MetroUIのコンポーネント
     private static MetroUI.MetroCalendar _calendar;
     private static MetroUI.MetroDigitalClock _clock;
     private static MetroUI.MetroTaskManager _taskManager;
     private static Panel _container;
+    private static bool _isLoadingAppointments;
     
     // メインエントリーポイント
     [STAThread]
@@ -5356,11 +5594,11 @@ public class DockableFormWithMetroUI
             _container.BackColor = Color.WhiteSmoke;
             _dockForm.ContentPanel.Controls.Add(_container);
             
-            // MetroUIコンポーネントの初期化
-            InitializeMetroComponents();
-            
-            // サンプルデータの追加
-            AddSampleAppointments();
+        // MetroUIコンポーネントの初期化
+        InitializeMetroComponents();
+
+        // 保存済みスケジュールの読み込み
+        LoadAppointmentsFromStorage();
             
             // フォームの表示
             _dockForm.PinMode = PinMode.None;
@@ -5395,50 +5633,61 @@ public class DockableFormWithMetroUI
         _taskManager.Size = new Size(360, 540);
         _taskManager.Calendar = _calendar;
         _container.Controls.Add(_taskManager);
+
+        _calendar.AppointmentAdded += Calendar_AppointmentsUpdated;
+        _calendar.AppointmentChanged += Calendar_AppointmentsUpdated;
+
+        _taskManager.TaskAdded += TaskManager_TasksUpdated;
+        _taskManager.TaskChanged += TaskManager_TasksUpdated;
+        _taskManager.TaskDeleted += TaskManager_TasksUpdated;
     }
-    
-    private static void AddSampleAppointments()
+
+    private static void LoadAppointmentsFromStorage()
     {
-        // 今日の予定
-        MetroUI.Appointment today1 = new MetroUI.Appointment();
-        today1.Title = "朝会";
-        today1.StartTime = DateTime.Today.AddHours(9);
-        today1.EndTime = DateTime.Today.AddHours(10);
-        _calendar.AddAppointment(today1);
+        _isLoadingAppointments = true;
 
-        MetroUI.Appointment today2 = new MetroUI.Appointment();
-        today2.Title = "プロジェクトミーティング";
-        today2.StartTime = DateTime.Today.AddHours(13);
-        today2.EndTime = DateTime.Today.AddHours(14);
-        today2.NotificationMinutesBefore = 30;
-        _calendar.AddAppointment(today2);
+        try
+        {
+            List<MetroUI.Appointment> appointments = ScheduleStorage.LoadAppointments();
 
-        // 明日の予定
-        MetroUI.Appointment tomorrow = new MetroUI.Appointment();
-        tomorrow.Title = "クライアントミーティング";
-        tomorrow.StartTime = DateTime.Today.AddDays(1).AddHours(15);
-        tomorrow.EndTime = DateTime.Today.AddDays(1).AddHours(16);
-        tomorrow.NotificationMinutesBefore = 60;
-        _calendar.AddAppointment(tomorrow);
+            if (appointments != null)
+            {
+                foreach (MetroUI.Appointment appointment in appointments)
+                {
+                    _calendar.AddAppointment(appointment);
+                }
 
-        // 次週の予定
-        MetroUI.Appointment nextWeek = new MetroUI.Appointment();
-        nextWeek.Title = "プロジェクト納期";
-        nextWeek.StartTime = DateTime.Today.AddDays(7).AddHours(18);
-        nextWeek.EndTime = DateTime.Today.AddDays(7).AddHours(19);
-        nextWeek.NotificationMinutesBefore = 1440; // 1日前
-        _calendar.AddAppointment(nextWeek);
+                _calendar.UpdateAppointmentStatuses();
+            }
+        }
+        finally
+        {
+            _isLoadingAppointments = false;
+        }
+    }
 
-        // 翌月の予定
-        MetroUI.Appointment nextMonth = new MetroUI.Appointment();
-        nextMonth.Title = "四半期レビュー";
-        nextMonth.StartTime = DateTime.Today.AddDays(28).AddHours(10);
-        nextMonth.EndTime = DateTime.Today.AddDays(28).AddHours(12);
-        nextMonth.NotificationMinutesBefore = 120; // 2時間前
-        _calendar.AddAppointment(nextMonth);
+    private static void Calendar_AppointmentsUpdated(object sender, EventArgs e)
+    {
+        if (_isLoadingAppointments)
+            return;
 
-        // 状態の更新
-        _calendar.UpdateAppointmentStatuses();
+        PersistAppointments();
+    }
+
+    private static void TaskManager_TasksUpdated(object sender, EventArgs e)
+    {
+        if (_isLoadingAppointments)
+            return;
+
+        PersistAppointments();
+    }
+
+    private static void PersistAppointments()
+    {
+        if (_calendar != null)
+        {
+            ScheduleStorage.SaveAppointments(_calendar.Appointments);
+        }
     }
 }
 
@@ -5446,7 +5695,7 @@ public class DockableFormWithMetroUI
 "@
 
 # C#コードをコンパイルして実行
-Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.ComponentModel, System.Core, System.Drawing.Design
+Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.ComponentModel, System.Core, System.Drawing.Design, System.Web.Extensions
 
 # 統合されたアプリケーションを起動
 [DockableFormWithMetroUI]::Main()
