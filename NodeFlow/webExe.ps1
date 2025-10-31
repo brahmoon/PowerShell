@@ -1,77 +1,33 @@
+<#
+ NodeFlow WebView2 Host - Async Stable Edition
+#>
+
+# --- STA強制 ---
+if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo "powershell.exe"
+    $psi.Arguments = "-STA -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    exit
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+[System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
 
-function Get-WebView2AssemblyInfo {
-    param(
-        [string[]]$HintDirectories = @()
-    )
+$LogFile = Join-Path $PSScriptRoot "NodeFlow.log"
+"[$(Get-Date)] NodeFlow starting..." | Out-File $LogFile -Encoding utf8
 
-    $candidates = @()
+# --- DLLロード ---
+$winFormsDll = Join-Path $PSScriptRoot 'Microsoft.Web.WebView2.WinForms.dll'
+$coreDll     = Join-Path $PSScriptRoot 'Microsoft.Web.WebView2.Core.dll'
+$loaderDll   = Join-Path $PSScriptRoot 'WebView2Loader.dll'
+$env:PATH = "$($PSScriptRoot);$env:PATH"
 
-    foreach ($hint in $HintDirectories) {
-        if ($hint -and (Test-Path $hint)) {
-            $candidates += (Get-Item $hint).FullName
-        }
-    }
+Add-Type -Path $winFormsDll
+Add-Type -Path $coreDll
 
-    $programFilesRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ -and (Test-Path $_) }
-    foreach ($root in $programFilesRoots) {
-        foreach ($suffix in @('Microsoft\EdgeWebView\Application', 'Microsoft\Edge\Application')) {
-            $path = Join-Path $root $suffix
-            if (Test-Path $path) {
-                $candidates += $path
-            }
-        }
-    }
-
-    $candidates = $candidates | Select-Object -Unique
-    foreach ($candidate in $candidates) {
-        $versionDirs = Get-ChildItem -Path $candidate -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
-        foreach ($version in $versionDirs) {
-            $winForms = Join-Path $version.FullName 'Microsoft.Web.WebView2.WinForms.dll'
-            $core = Join-Path $version.FullName 'Microsoft.Web.WebView2.Core.dll'
-            $loader = Join-Path $version.FullName 'WebView2Loader.dll'
-
-            if ((Test-Path $winForms) -and (Test-Path $core)) {
-                return [PSCustomObject]@{
-                    WinForms       = (Get-Item $winForms).FullName
-                    Core           = (Get-Item $core).FullName
-                    Loader         = if (Test-Path $loader) { (Get-Item $loader).FullName } else { $null }
-                    LoaderRootPath = $version.FullName
-                }
-            }
-        }
-    }
-
-    return $null
-}
-
-$localWebViewFolder = Join-Path $PSScriptRoot 'WebView2'
-$assemblyInfo = Get-WebView2AssemblyInfo -HintDirectories @($localWebViewFolder)
-
-if (-not $assemblyInfo) {
-    [System.Windows.Forms.MessageBox]::Show(
-        'WebView2 ランタイムまたはライブラリが見つかりませんでした。Microsoft Edge WebView2 ランタイムをインストールしてください。',
-        'NodeFlow',
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Error
-    ) | Out-Null
-    return
-}
-
-if ($assemblyInfo.LoaderRootPath) {
-    $loaderDirectory = $assemblyInfo.LoaderRootPath
-    if ($loaderDirectory -and (Test-Path $loaderDirectory)) {
-        $currentPath = [System.Environment]::GetEnvironmentVariable('PATH')
-        if ($currentPath -notlike "*$loaderDirectory*") {
-            [System.Environment]::SetEnvironmentVariable('PATH', "$loaderDirectory;$currentPath")
-        }
-    }
-}
-
-Add-Type -Path $assemblyInfo.WinForms
-Add-Type -Path $assemblyInfo.Core
-
+# --- Bridgeクラス ---
 $csCode = @"
 using System;
 using System.Diagnostics;
@@ -80,150 +36,87 @@ using System.Runtime.InteropServices;
 
 [ComVisible(true)]
 [ClassInterface(ClassInterfaceType.AutoDual)]
-public class NodeBridge
-{
-    private static string Escape(string value)
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return string.Empty;
-        }
-
-        return value
-            .Replace("\\", "\\\\")
-            .Replace("\"", "\\\"")
-            .Replace("\r", "\\r")
-            .Replace("\n", "\\n");
-    }
-
-    public string RunPowerShell(string script)
-    {
-        if (string.IsNullOrWhiteSpace(script))
-        {
-            return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"Script is empty.\"}";
-        }
-
-        string tempFile = Path.Combine(Path.GetTempPath(), "nodeflow_" + Guid.NewGuid().ToString("N") + ".ps1");
-
-        try
-        {
-            File.WriteAllText(tempFile, script ?? string.Empty);
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + tempFile + "\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using (var process = Process.Start(psi))
-            {
-                if (process == null)
-                {
-                    return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"Failed to start PowerShell process.\"}";
-                }
-
-                string stdout = process.StandardOutput.ReadToEnd();
-                string stderr = process.StandardError.ReadToEnd();
-                process.WaitForExit();
-
-                return "{\"exitCode\":" + process.ExitCode + ",\"stdout\":\"" + Escape(stdout) + "\",\"stderr\":\"" + Escape(stderr) + "\"}";
+public class NodeBridge {
+    public string RunPowerShell(string script) {
+        try {
+            var psi = new ProcessStartInfo();
+            psi.FileName = "powershell.exe";
+            psi.Arguments = "-NoProfile -Command " + script;
+            psi.RedirectStandardOutput = true;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            using (var proc = Process.Start(psi)) {
+                string output = proc.StandardOutput.ReadToEnd();
+                proc.WaitForExit();
+                return output;
             }
-        }
-        catch (Exception ex)
-        {
-            return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"" + Escape(ex.Message) + "\"}";
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(tempFile))
-                {
-                    File.Delete(tempFile);
-                }
-            }
-            catch
-            {
-                // ignore cleanup errors
-            }
+        } catch (Exception ex) {
+            return "Error: " + ex.Message;
         }
     }
 }
 "@
-
 Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core
 
-[System.Windows.Forms.Application]::EnableVisualStyles()
-[System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
-
+# --- index.html ---
 $indexPath = Join-Path $PSScriptRoot 'index.html'
 if (-not (Test-Path $indexPath)) {
-    [System.Windows.Forms.MessageBox]::Show(
-        "index.html が見つかりません: $indexPath",
-        'NodeFlow',
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Error
-    ) | Out-Null
-    return
+    [System.Windows.Forms.MessageBox]::Show("index.html not found.", "NodeFlow") | Out-Null
+    exit
 }
-
 $resolvedIndexPath = (Resolve-Path $indexPath).ProviderPath
+$resolvedUri = "file:///" + $resolvedIndexPath.Replace("\","/")
 
+# --- フォーム構築 ---
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'NodeFlow'
-$form.Size = New-Object System.Drawing.Size(1200, 800)
-$form.StartPosition = 'CenterScreen'
+$form.Text = "NodeFlow"
+$form.Size = New-Object System.Drawing.Size(1200,800)
+$form.StartPosition = "CenterScreen"
 
 $webView = New-Object Microsoft.Web.WebView2.WinForms.WebView2
-$webView.Dock = 'Fill'
-$webView.DefaultBackgroundColor = [System.Drawing.Color]::FromArgb(255, 24, 24, 24)
+$webView.Dock = "Fill"
 $form.Controls.Add($webView)
 
 $bridge = New-Object NodeBridge
 
-try {
-    $userDataFolder = Join-Path ([System.IO.Path]::GetTempPath()) 'NodeFlowWebView2'
-    if (-not (Test-Path $userDataFolder)) {
-        [System.IO.Directory]::CreateDirectory($userDataFolder) | Out-Null
-    }
-
-    $environment = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $userDataFolder).GetAwaiter().GetResult()
-    $null = $webView.EnsureCoreWebView2Async($environment).GetAwaiter().GetResult()
-
-    $webView.CoreWebView2.AddHostObjectToScript('nodeBridge', $bridge)
-    $webView.CoreWebView2.Settings.AreDefaultScriptDialogsEnabled = $true
-    $webView.CoreWebView2.Settings.AreDevToolsEnabled = $false
-
-    $webView.Source = New-Object System.Uri($resolvedIndexPath)
-}
-catch {
-    [System.Windows.Forms.MessageBox]::Show(
-        "WebView2 の初期化に失敗しました: $($_.Exception.Message)",
-        'NodeFlow',
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Error
-    ) | Out-Null
-    $webView.Dispose()
-    $form.Dispose()
-    return
-}
-
-$form.Add_Shown({ param($sender, $args) $sender.Activate() })
-$form.Add_FormClosed({
-    param($sender, $args)
+# --- 初期化ロジック ---
+$form.Add_Shown({
     try {
-        if ($webView.CoreWebView2) {
-            $webView.CoreWebView2.RemoveHostObjectFromScript('nodeBridge')
-        }
+        "[$(Get-Date)] Initializing WebView2..." | Out-File $LogFile -Append
+
+        # 環境オブジェクト作成
+        $userDataFolder = Join-Path ([System.IO.Path]::GetTempPath()) 'NodeFlowWebView2'
+        if (-not (Test-Path $userDataFolder)) { [System.IO.Directory]::CreateDirectory($userDataFolder) | Out-Null }
+
+        $envTask = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $userDataFolder)
+        $envTask.ContinueWith({
+            param($t)
+            $form.Invoke({
+                try {
+                    $env = $t.Result
+                    $initTask = $webView.EnsureCoreWebView2Async($env)
+                    $initTask.ContinueWith({
+                        param($x)
+                        $form.Invoke({
+                            try {
+                                $webView.CoreWebView2.AddHostObjectToScript('nodeBridge', $bridge)
+                                $webView.CoreWebView2.Settings.AreDevToolsEnabled = $true
+                                $webView.Source = [System.Uri]$resolvedUri
+                                "[$(Get-Date)] WebView2 initialized OK -> $resolvedUri" | Out-File $LogFile -Append
+                            } catch {
+                                "[$(Get-Date)] Error in nested init: $($_.Exception.Message)" | Out-File $LogFile -Append
+                            }
+                        })
+                    })
+                } catch {
+                    "[$(Get-Date)] Env init error: $($_.Exception.Message)" | Out-File $LogFile -Append
+                }
+            })
+        })
     } catch {
-        # ignore teardown failures
+        "[$(Get-Date)] Unexpected init exception: $($_.Exception.Message)" | Out-File $LogFile -Append
     }
-    $webView.Dispose()
 })
 
-$form.ShowDialog() | Out-Null
-$form.Dispose()
+$form.Add_FormClosed({ "[$(Get-Date)] NodeFlow closed." | Out-File $LogFile -Append })
+[System.Windows.Forms.Application]::Run($form)
