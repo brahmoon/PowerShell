@@ -1,104 +1,120 @@
-Add-Type -AssemblyName System.Windows.Forms
+﻿Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# --- 子プロセス呼び出し用クラス（Bridge） ---
 $csCode = @"
 using System;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.IO;
 using System.Windows.Forms;
 
 [ComVisible(true)]
-public class NodeBridge
-{
-    public void RunScript(string script)
-    {
-        if (string.IsNullOrWhiteSpace(script))
-        {
-            MessageBox.Show("生成されたスクリプトが空です。", "NodeFlow", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
+public class NodeBridge {
+    public void Execute(string json) {
+        try {
+            // JSONを一時ファイルに保存
+            string temp = Path.Combine(Path.GetTempPath(), "node_" + Guid.NewGuid().ToString("N") + ".json");
+            File.WriteAllText(temp, json);
 
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -Command -",
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using (var process = Process.Start(psi))
-            {
-                if (process == null)
-                {
-                    MessageBox.Show("PowerShell プロセスを起動できませんでした。", "NodeFlow", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
+            // 子プロセスPowerShellにスクリプト文字列を直接渡す
+            string script = @"
+                try {
+                    \$json = Get-Content '$temp' -Raw | ConvertFrom-Json
+                    switch (\$json.op) {
+                        'add' { \$r = \$json.a + \$json.b }
+                        'sub' { \$r = \$json.a - \$json.b }
+                        'mul' { \$r = \$json.a * \$json.b }
+                        'div' { 
+                            if (\$json.b -eq 0) { throw 'Division by zero' }
+                            \$r = \$json.a / \$json.b 
+                        }
+                        default { throw ('Unknown operation: ' + \$json.op) }
+                    }
+                    [pscustomobject]@{status='ok';op=\$json.op;result=\$r} | ConvertTo-Json -Compress
+                } catch {
+                    [pscustomobject]@{status='error';message=\$_.Exception.Message} | ConvertTo-Json -Compress
                 }
+            ";
 
-                process.StandardInput.WriteLine(script);
-                process.StandardInput.WriteLine("exit $LASTEXITCODE");
-                process.StandardInput.Flush();
-                process.StandardInput.Close();
+            var psi = new ProcessStartInfo();
+            psi.FileName = "powershell.exe";
+            psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \"" + script.Replace("\"","\\\"") + "\"";
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
 
-                string output = process.StandardOutput.ReadToEnd();
-                string error = process.StandardError.ReadToEnd();
-                process.WaitForExit();
+            using (var proc = Process.Start(psi)) {
+                string output = proc.StandardOutput.ReadToEnd();
+                string error = proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
 
-                if (!string.IsNullOrWhiteSpace(error))
-                {
-                    MessageBox.Show(error.Trim(), "PowerShell 実行エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-                else
-                {
-                    string message = string.IsNullOrWhiteSpace(output)
-                        ? "PowerShell スクリプトを実行しました。"
-                        : output.Trim();
-                    MessageBox.Show(message, "PowerShell 実行結果", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                try { File.Delete(temp); } catch {}
+
+                if (!string.IsNullOrWhiteSpace(error)) {
+                    MessageBox.Show("Error: " + error, "Executor Error");
+                } else {
+                    MessageBox.Show("Result: " + output, "Executor Result");
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(
-                "PowerShell スクリプトの実行に失敗しました: " + ex.Message,
-                "NodeFlow",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+        } catch (Exception ex) {
+            MessageBox.Show("Execution failed: " + ex.Message, "Bridge Error");
         }
     }
 }
-"@;
+"@
 
-Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core
+# コンパイル
+Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.ComponentModel, System.Core, System.Drawing.Design
 
-[System.Windows.Forms.Application]::EnableVisualStyles()
-[System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
-
+# --- フォーム構築 ---
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "NodeFlow Editor"
-$form.Size = New-Object System.Drawing.Size(1200, 800)
+$form.Text = "Node Editor Host"
+$form.Size = New-Object System.Drawing.Size(900,600)
 $form.StartPosition = "CenterScreen"
 
-$browser = New-Object System.Windows.Forms.WebBrowser
-$browser.Dock = "Fill"
-$browser.ScriptErrorsSuppressed = $true
-$browser.ObjectForScripting = (New-Object NodeBridge)
+$wb = New-Object System.Windows.Forms.WebBrowser
+$wb.Dock = "Fill"
+$wb.ScriptErrorsSuppressed = $true
+$wb.ObjectForScripting = (New-Object NodeBridge)
 
-$indexPath = Join-Path $PSScriptRoot 'index.html'
-if (-not (Test-Path $indexPath)) {
-    [System.Windows.Forms.MessageBox]::Show(
-        "index.html が見つかりません: $indexPath",
-        "NodeFlow",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Error)
-    return
+# --- HTML ---
+$html = @"
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset='utf-8'>
+<title>Node Editor Demo</title>
+<style>
+body { font-family: sans-serif; margin: 20px; }
+textarea { width: 100%; height: 100px; }
+button { padding: 6px 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h2>Node Execution (Direct Child Process)</h2>
+<textarea id='nodejson'>{ "op":"mul", "a":3, "b":4 }</textarea><br>
+<button onclick='runNode()'>Execute Node</button>
+<div id='log' style='margin-top:12px;border:1px solid #ccc;padding:8px;'></div>
+<script>
+function log(msg){
+  document.getElementById('log').innerHTML += msg + '<br>';
 }
+function runNode(){
+  var node = document.getElementById('nodejson').value;
+  log('Executing: ' + node);
+  if(window.external && window.external.Execute){
+    window.external.Execute(node);
+  } else {
+    log('Bridge not available.');
+  }
+}
+</script>
+</body>
+</html>
+"@
 
-$browser.Url = New-Object System.Uri($indexPath)
-$form.Controls.Add($browser)
-
-$form.ShowDialog() | Out-Null
+$wb.DocumentText = $html
+$form.Controls.Add($wb)
+$form.ShowDialog()
