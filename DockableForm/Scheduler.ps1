@@ -2554,7 +2554,7 @@ namespace MetroUI
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            
+
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
@@ -3710,15 +3710,31 @@ namespace MetroUI
             if (this.Width <= 0 || this.Height <= 0)
                 return; // サイズが有効でない場合は計算をスキップ
 
-            _addButtonRect = new Rectangle(Width - 50, Height - 50, 40, 40);
-            
+            UpdateAddButtonPosition();
+
             // _dateHeaderLabelがnullでないことを確認
             if (_dateHeaderLabel != null)
             {
                 _dateHeaderLabel.Size = new Size(Width - 20, 30);
             }
-            
+
             UpdateTaskUIItems();
+        }
+
+        private void UpdateAddButtonPosition()
+        {
+            int buttonSize = 40;
+            int margin = 15;
+            int x = ClientSize.Width - buttonSize - margin;
+            int y = ClientSize.Height - buttonSize - margin;
+
+            if (x < margin)
+                x = margin;
+
+            if (y < margin)
+                y = margin;
+
+            _addButtonRect = new Rectangle(x, y, buttonSize, buttonSize);
         }
 
         /// <summary>
@@ -4067,7 +4083,13 @@ namespace MetroUI
                     // 完了状態（既存タスクの編集時のみ）
                     if (!isNew && completedCheckbox != null)
                     {
+                        bool wasCompleted = task.IsCompleted;
                         task.IsCompleted = completedCheckbox.Checked;
+
+                        if (!wasCompleted && task.IsCompleted)
+                        {
+                            SetAllSubTasksCompletion(task, true);
+                        }
                     }
 
                     // タスク追加/更新
@@ -4192,6 +4214,29 @@ namespace MetroUI
         }
 
         /// <summary>
+        /// サブタスクを削除する
+        /// </summary>
+        private void DeleteSubTask(Appointment parentTask, SubTask subTask)
+        {
+            if (parentTask == null || subTask == null)
+                return;
+
+            DialogResult result = MessageBox.Show(
+                String.Format("サブタスク「{0}」を削除しますか？", subTask.Title),
+                "サブタスクの削除",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (result == DialogResult.Yes)
+            {
+                parentTask.SubTasks.Remove(subTask);
+                UpdateTaskUIItems();
+                Invalidate();
+                OnTaskChanged(EventArgs.Empty);
+            }
+        }
+
+        /// <summary>
         /// メモページを表示する
         /// </summary>
         private void ShowMemoPage(Appointment task, SubTask subTask = null)
@@ -4272,6 +4317,17 @@ namespace MetroUI
             OnTaskChanged(EventArgs.Empty);
         }
 
+        private void SetAllSubTasksCompletion(Appointment task, bool isCompleted)
+        {
+            if (task == null || task.SubTasks == null)
+                return;
+
+            foreach (SubTask subTask in task.SubTasks)
+            {
+                subTask.IsCompleted = isCompleted;
+            }
+        }
+
         /// <summary>
         /// TaskItemUI内のサブタスク関連の矩形を更新
         /// </summary>
@@ -4282,7 +4338,11 @@ namespace MetroUI
                 item.SubTaskRects.Clear();
                 item.SubTaskCheckBoxRects.Clear();
                 item.SubTaskMemoIconRects.Clear();
-                
+                item.SubTaskEditButtonRects.Clear();
+                item.SubTaskDeleteButtonRects.Clear();
+                item.SubTaskEditButtonHovers.Clear();
+                item.SubTaskDeleteButtonHovers.Clear();
+
                 for (int i = 0; i < item.Task.SubTasks.Count; i++)
                 {
                     // サブタスク全体の矩形
@@ -4309,9 +4369,29 @@ namespace MetroUI
                         subTaskRect.Y + (subTaskRect.Height - 16) / 2,
                         16,
                         16);
-                        
+
                     item.SubTaskMemoIconRects.Add(memoIconRect);
-                    
+
+                    int buttonSize = 22;
+                    int buttonSpacing = 5;
+                    int buttonMargin = 10;
+                    Rectangle deleteButtonRect = new Rectangle(
+                        subTaskRect.Right - buttonMargin - buttonSize,
+                        subTaskRect.Y + (subTaskRect.Height - buttonSize) / 2,
+                        buttonSize,
+                        buttonSize);
+
+                    Rectangle editButtonRect = new Rectangle(
+                        deleteButtonRect.X - buttonSpacing - buttonSize,
+                        subTaskRect.Y + (subTaskRect.Height - buttonSize) / 2,
+                        buttonSize,
+                        buttonSize);
+
+                    item.SubTaskEditButtonRects.Add(editButtonRect);
+                    item.SubTaskDeleteButtonRects.Add(deleteButtonRect);
+                    item.SubTaskEditButtonHovers.Add(false);
+                    item.SubTaskDeleteButtonHovers.Add(false);
+
                     nextY += subTaskRect.Height + 5;
                 }
             }
@@ -4370,9 +4450,9 @@ namespace MetroUI
                 bool newEditHover = item.EditButtonRect.Contains(e.Location);
                 bool newDeleteHover = item.DeleteButtonRect.Contains(e.Location);
                 bool newAddHover = item.AddButtonRect.Contains(e.Location);
-                
-                if (item.IsHovering != newHover || 
-                    item.IsEditButtonHover != newEditHover || 
+
+                if (item.IsHovering != newHover ||
+                    item.IsEditButtonHover != newEditHover ||
                     item.IsDeleteButtonHover != newDeleteHover ||
                     item.IsAddButtonHover != newAddHover)
                 {
@@ -4381,6 +4461,26 @@ namespace MetroUI
                     item.IsDeleteButtonHover = newDeleteHover;
                     item.IsAddButtonHover = newAddHover;
                     redraw = true;
+                }
+
+                for (int i = 0; i < item.SubTaskEditButtonRects.Count && i < item.SubTaskEditButtonHovers.Count; i++)
+                {
+                    bool newSubTaskEditHover = item.SubTaskEditButtonRects[i].Contains(e.Location);
+                    if (item.SubTaskEditButtonHovers[i] != newSubTaskEditHover)
+                    {
+                        item.SubTaskEditButtonHovers[i] = newSubTaskEditHover;
+                        redraw = true;
+                    }
+                }
+
+                for (int i = 0; i < item.SubTaskDeleteButtonRects.Count && i < item.SubTaskDeleteButtonHovers.Count; i++)
+                {
+                    bool newSubTaskDeleteHover = item.SubTaskDeleteButtonRects[i].Contains(e.Location);
+                    if (item.SubTaskDeleteButtonHovers[i] != newSubTaskDeleteHover)
+                    {
+                        item.SubTaskDeleteButtonHovers[i] = newSubTaskDeleteHover;
+                        redraw = true;
+                    }
                 }
             }
 
@@ -4433,6 +4533,24 @@ namespace MetroUI
                     item.IsEditButtonHover = false;
                     item.IsDeleteButtonHover = false;
                     redraw = true;
+                }
+
+                for (int i = 0; i < item.SubTaskEditButtonHovers.Count; i++)
+                {
+                    if (item.SubTaskEditButtonHovers[i])
+                    {
+                        item.SubTaskEditButtonHovers[i] = false;
+                        redraw = true;
+                    }
+                }
+
+                for (int i = 0; i < item.SubTaskDeleteButtonHovers.Count; i++)
+                {
+                    if (item.SubTaskDeleteButtonHovers[i])
+                    {
+                        item.SubTaskDeleteButtonHovers[i] = false;
+                        redraw = true;
+                    }
                 }
             }
 
@@ -4513,7 +4631,15 @@ namespace MetroUI
                 // チェックボックスのクリック
                 if (item.CheckBoxRect.Contains(e.Location))
                 {
-                    item.Task.IsCompleted = !item.Task.IsCompleted;
+                    bool newCompleted = !item.Task.IsCompleted;
+                    bool wasCompleted = item.Task.IsCompleted;
+                    item.Task.IsCompleted = newCompleted;
+
+                    if (!wasCompleted && newCompleted)
+                    {
+                        SetAllSubTasksCompletion(item.Task, true);
+                    }
+
                     item.Task.UpdateStatus();
                     OnTaskChanged(EventArgs.Empty);
                     Invalidate();
@@ -4585,7 +4711,25 @@ namespace MetroUI
                         return;
                     }
                 }
-                
+
+                for (int i = 0; i < item.SubTaskEditButtonRects.Count; i++)
+                {
+                    if (i < item.Task.SubTasks.Count && item.SubTaskEditButtonRects[i].Contains(e.Location))
+                    {
+                        EditSubTask(item.Task, item.Task.SubTasks[i]);
+                        return;
+                    }
+                }
+
+                for (int i = 0; i < item.SubTaskDeleteButtonRects.Count; i++)
+                {
+                    if (i < item.Task.SubTasks.Count && item.SubTaskDeleteButtonRects[i].Contains(e.Location))
+                    {
+                        DeleteSubTask(item.Task, item.Task.SubTasks[i]);
+                        return;
+                    }
+                }
+
                 // サブタスクのメモアイコンクリック
                 for (int i = 0; i < item.SubTaskMemoIconRects.Count; i++)
                 {
@@ -4627,6 +4771,7 @@ namespace MetroUI
             base.OnPaint(e);
             
             Graphics g = e.Graphics;
+            UpdateAddButtonPosition();
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
@@ -5063,22 +5208,36 @@ namespace MetroUI
                     }
                     
                     // サブタスクのタイトル
-                    using (Font subTaskFont = new Font(MetroFont.FontFamily, 9f, 
+                    using (Font subTaskFont = new Font(MetroFont.FontFamily, 9f,
                         subTask.IsCompleted ? FontStyle.Strikeout : FontStyle.Regular))
-                    using (SolidBrush textBrush = new SolidBrush(subTask.IsCompleted ? 
+                    using (SolidBrush textBrush = new SolidBrush(subTask.IsCompleted ?
                         MetroColors.TextLight : MetroColors.Text))
                     {
+                        int titleLeft = item.SubTaskCheckBoxRects[i].Right + 5;
+                        int titleRight = subTaskRect.Right - 10;
+
+                        if (i < item.SubTaskEditButtonRects.Count)
+                        {
+                            titleRight = item.SubTaskEditButtonRects[i].X - 5;
+                        }
+
+                        int titleWidth = titleRight - titleLeft;
+                        if (titleWidth < 0)
+                        {
+                            titleWidth = 0;
+                        }
+
                         Rectangle titleRect = new Rectangle(
-                            item.SubTaskCheckBoxRects[i].Right + 5,
+                            titleLeft,
                             subTaskRect.Y + (subTaskRect.Height - 16) / 2,
-                            subTaskRect.Width - item.SubTaskCheckBoxRects[i].Width - 30,
+                            titleWidth,
                             16);
-                            
+
                         g.DrawString(subTask.Title, subTaskFont, textBrush, titleRect);
                     }
-                    
+
                     // サブタスクのチェックボックス
-                    using (SolidBrush boxBrush = new SolidBrush(subTask.IsCompleted ? 
+                    using (SolidBrush boxBrush = new SolidBrush(subTask.IsCompleted ?
                         MetroColors.Success : Color.White))
                     using (Pen boxPen = new Pen(subTask.IsCompleted ? 
                         MetroColors.Success : MetroColors.TextLight, 1.5f))
@@ -5111,6 +5270,51 @@ namespace MetroUI
                             g.DrawString("📄", emojiFont, textBrush, r.X, r.Y);
                         }
                     }
+
+                    if (i < item.SubTaskEditButtonRects.Count)
+                    {
+                        bool isHover = i < item.SubTaskEditButtonHovers.Count && item.SubTaskEditButtonHovers[i];
+                        Rectangle editRect = item.SubTaskEditButtonRects[i];
+                        Color editColor = isHover ? MetroColors.Secondary : MetroColors.Primary;
+
+                        using (SolidBrush editBrush = new SolidBrush(editColor))
+                        {
+                            DrawingUtils.FillRoundedRectangle(g, editBrush, editRect, 3);
+                        }
+
+                        using (Font emojiFont = new Font("Segoe UI Emoji", 7f))
+                        using (SolidBrush iconBrush = new SolidBrush(Color.White))
+                        {
+                            g.DrawString("🖊", emojiFont, iconBrush,
+                                editRect.X + 5,
+                                editRect.Y + 4);
+                        }
+                    }
+
+                    if (i < item.SubTaskDeleteButtonRects.Count)
+                    {
+                        bool isHover = i < item.SubTaskDeleteButtonHovers.Count && item.SubTaskDeleteButtonHovers[i];
+                        Rectangle deleteRect = item.SubTaskDeleteButtonRects[i];
+                        Color deleteColor = isHover ? MetroColors.Danger : Color.FromArgb(220, 220, 220);
+
+                        using (SolidBrush deleteBrush = new SolidBrush(deleteColor))
+                        {
+                            DrawingUtils.FillRoundedRectangle(g, deleteBrush, deleteRect, 3);
+                        }
+
+                        using (Pen iconPen = new Pen(isHover ? Color.White : Color.DimGray, 1.5f))
+                        {
+                            int centerX = deleteRect.X + deleteRect.Width / 2;
+                            int centerY = deleteRect.Y + deleteRect.Height / 2;
+
+                            g.DrawLine(iconPen,
+                                centerX - 4, centerY - 4,
+                                centerX + 4, centerY + 4);
+                            g.DrawLine(iconPen,
+                                centerX + 4, centerY - 4,
+                                centerX - 4, centerY + 4);
+                        }
+                    }
                 }
             }
         }
@@ -5141,9 +5345,13 @@ namespace MetroUI
             private List<Rectangle> _subTaskRects;
             private List<Rectangle> _subTaskCheckBoxRects;
             private List<Rectangle> _subTaskMemoIconRects;
+            private List<Rectangle> _subTaskEditButtonRects;
+            private List<Rectangle> _subTaskDeleteButtonRects;
+            private List<bool> _subTaskEditButtonHovers;
+            private List<bool> _subTaskDeleteButtonHovers;
             public Rectangle ToggleSubTasksButtonRect { get; set; }
             public Rectangle MemoIconRect { get; set; }
-            
+
             public int TitleScrollOffset { get; set; } // タイトルのスクロールオフセット
             public bool IsTitleScrolling { get; set; } // スクロール中かどうか
             public DateTime TitleScrollStartTime { get; set; } // スクロール開始時間
@@ -5163,21 +5371,49 @@ namespace MetroUI
                 set { _subTaskCheckBoxRects = value; }
             }
 
-            public List<Rectangle> SubTaskMemoIconRects 
-            { 
-                get { return _subTaskMemoIconRects; } 
+            public List<Rectangle> SubTaskMemoIconRects
+            {
+                get { return _subTaskMemoIconRects; }
                 set { _subTaskMemoIconRects = value; }
+            }
+
+            public List<Rectangle> SubTaskEditButtonRects
+            {
+                get { return _subTaskEditButtonRects; }
+                set { _subTaskEditButtonRects = value; }
+            }
+
+            public List<Rectangle> SubTaskDeleteButtonRects
+            {
+                get { return _subTaskDeleteButtonRects; }
+                set { _subTaskDeleteButtonRects = value; }
+            }
+
+            public List<bool> SubTaskEditButtonHovers
+            {
+                get { return _subTaskEditButtonHovers; }
+                set { _subTaskEditButtonHovers = value; }
+            }
+
+            public List<bool> SubTaskDeleteButtonHovers
+            {
+                get { return _subTaskDeleteButtonHovers; }
+                set { _subTaskDeleteButtonHovers = value; }
             }
 
             public TaskItemUI(Appointment task, Rectangle bounds)
             {
                 Task = task;
                 Bounds = bounds;
-                
+
                 // リストの初期化
                 _subTaskRects = new List<Rectangle>();
                 _subTaskCheckBoxRects = new List<Rectangle>();
                 _subTaskMemoIconRects = new List<Rectangle>();
+                _subTaskEditButtonRects = new List<Rectangle>();
+                _subTaskDeleteButtonRects = new List<Rectangle>();
+                _subTaskEditButtonHovers = new List<bool>();
+                _subTaskDeleteButtonHovers = new List<bool>();
                 
                 // タスク固有のスクロールパラメータを設定（ランダム化）
                 // タスクのタイトルとIDを組み合わせてシードを生成
@@ -5465,8 +5701,8 @@ public static class ScheduleStorage
         public static AppointmentData FromAppointment(MetroUI.Appointment appointment)
         {
             AppointmentData data = new AppointmentData();
-            data.StartTime = appointment.StartTime;
-            data.EndTime = appointment.EndTime;
+            data.StartTime = NormalizeToLocal(appointment.StartTime);
+            data.EndTime = NormalizeToLocal(appointment.EndTime);
             data.Title = appointment.Title;
             data.NotificationMinutesBefore = appointment.NotificationMinutesBefore;
             data.IsCompleted = appointment.IsCompleted;
@@ -5490,8 +5726,8 @@ public static class ScheduleStorage
         public MetroUI.Appointment ToAppointment()
         {
             MetroUI.Appointment appointment = new MetroUI.Appointment();
-            appointment.StartTime = StartTime;
-            appointment.EndTime = EndTime;
+            appointment.StartTime = NormalizeToLocal(StartTime);
+            appointment.EndTime = NormalizeToLocal(EndTime);
             appointment.Title = Title;
             appointment.NotificationMinutesBefore = NotificationMinutesBefore;
             appointment.IsCompleted = IsCompleted;
@@ -5509,8 +5745,31 @@ public static class ScheduleStorage
                 }
             }
 
+            if (appointment.IsCompleted)
+            {
+                foreach (MetroUI.MetroTaskManager.SubTask subTask in appointment.SubTasks)
+                {
+                    subTask.IsCompleted = true;
+                }
+            }
+
             appointment.UpdateStatus();
             return appointment;
+        }
+
+        private static DateTime NormalizeToLocal(DateTime value)
+        {
+            if (value.Kind == DateTimeKind.Utc)
+            {
+                return value.ToLocalTime();
+            }
+
+            if (value.Kind == DateTimeKind.Unspecified)
+            {
+                return DateTime.SpecifyKind(value, DateTimeKind.Local);
+            }
+
+            return value;
         }
 
         private static MetroUI.AppointmentStatus ParseStatus(string status)
