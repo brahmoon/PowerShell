@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Excel Controller</title>
+<style>
+body { font-family: sans-serif; padding: 20px; }
+button, select { margin: 5px; padding: 6px 12px; font-size: 14px; }
+pre { background: #f7f7f7; padding: 10px; border: 1px solid #ccc; }
+</style>
+</head>
+<body>
+  <h1>Excel Controller (PowerShell連携)</h1>
+
+  <div>
+    <label>操作ブック：</label>
+    <select id="bookSelect"></select>
+    <button id="btnRefresh">更新</button>
+  </div>
+
+  <div style="margin-top:10px;">
+    <button id="btnGet">選択セルの情報取得</button>
+    <button id="btnColor">選択セルを着色</button>
+  </div>
+
+  <pre id="result"></pre>
+
+<script>
+const API = "http://127.0.0.1:8080";
+const bookSelect = document.getElementById("bookSelect");
+const resultBox = document.getElementById("result");
+
+async function callApi(path, data) {
+  try {
+    const res = await fetch(API + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: data ? JSON.stringify(data) : "{}"
+    });
+    if (!res.ok) throw new Error("Server error " + res.status);
+    return await res.json();
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function refreshBooks() {
+  const data = await callApi("/listWorkbooks");
+  bookSelect.innerHTML = "";
+  if (data.ok && data.workbooks.length > 0) {
+    data.workbooks.forEach(name => {
+      const opt = document.createElement("option");
+      opt.textContent = name;
+      opt.value = name;
+      bookSelect.appendChild(opt);
+    });
+    await callApi("/setWorkbook", { name: data.workbooks[0] });
+  } else {
+    const opt = document.createElement("option");
+    opt.textContent = "(ブックなし)";
+    bookSelect.appendChild(opt);
+  }
+}
+
+bookSelect.onchange = async () => {
+  const name = bookSelect.value;
+  const res = await callApi("/setWorkbook", { name });
+  resultBox.textContent = JSON.stringify(res, null, 2);
+};
+
+document.getElementById("btnRefresh").onclick = refreshBooks;
+
+document.getElementById("btnGet").onclick = async () => {
+  const res = await callApi("/getSelection");
+  resultBox.textContent = JSON.stringify(res, null, 2);
+};
+
+document.getElementById("btnColor").onclick = async () => {
+  const res = await callApi("/colorSelection", { color: "#ffff99" });
+  resultBox.textContent = JSON.stringify(res, null, 2);
+};
+
+// 初回起動時に一覧取得
+refreshBooks();
+</script>
+</body>
+</html>
