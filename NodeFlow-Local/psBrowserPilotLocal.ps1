@@ -1,4 +1,4 @@
-Add-Type -AssemblyName System.Web
+﻿Add-Type -AssemblyName System.Web
 Add-Type -AssemblyName System.Management.Automation
 
 $script:ContentRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
