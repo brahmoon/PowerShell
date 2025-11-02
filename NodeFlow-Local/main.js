@@ -1,9 +1,32 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 
 const GRAPH_FILTER = [{ name: 'NodeFlow Graph', extensions: ['json'] }];
 const SCRIPT_FILTER = [{ name: 'PowerShell Script', extensions: ['ps1', 'txt'] }];
+const APP_PROTOCOL = 'app';
+
+protocol.registerSchemesAsPrivileged?.([
+  {
+    scheme: APP_PROTOCOL,
+    privileges: {
+      secure: true,
+      standard: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+]);
+
+const registerLocalProtocol = () => {
+  protocol.registerFileProtocol(APP_PROTOCOL, (request, callback) => {
+    const url = request.url.replace(`${APP_PROTOCOL}://`, '');
+    const relativePath = url.length ? url : 'index.html';
+    const filePath = path.normalize(path.join(__dirname, relativePath));
+    callback({ path: filePath });
+  });
+};
 
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
@@ -18,10 +41,11 @@ const createWindow = () => {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.loadURL(`${APP_PROTOCOL}://index.html`);
 };
 
 app.whenReady().then(() => {
+  registerLocalProtocol();
   createWindow();
 
   app.on('activate', () => {
