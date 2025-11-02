@@ -1,4 +1,5 @@
-﻿Add-Type -AssemblyName System.Web
+Add-Type -AssemblyName System.Web
+Add-Type -AssemblyName System.Drawing
 
 $prefix = "http://127.0.0.1:8080/"
 $listener = New-Object System.Net.HttpListener
@@ -44,6 +45,36 @@ function Send-Json($context, $obj) {
     $res.OutputStream.Write($buffer, 0, $buffer.Length)
     $res.OutputStream.Flush()
     $res.OutputStream.Close()
+}
+
+function Convert-HexToOleColor {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hex
+    )
+
+    if (-not $Hex -or $Hex.Length -ne 7 -or $Hex[0] -ne '#') {
+        throw "Invalid hex color: $Hex"
+    }
+
+    $r = [Convert]::ToInt32($Hex.Substring(1, 2), 16)
+    $g = [Convert]::ToInt32($Hex.Substring(3, 2), 16)
+    $b = [Convert]::ToInt32($Hex.Substring(5, 2), 16)
+    return ($b -bor ($g -shl 8) -bor ($r -shl 16))
+}
+
+function Convert-OleToHex {
+    param(
+        [Parameter()][object]$Ole
+    )
+
+    if ($null -eq $Ole) { return $null }
+
+    try {
+        $color = [System.Drawing.ColorTranslator]::FromOle([int]$Ole)
+        return ('#{0:X2}{1:X2}{2:X2}' -f $color.R, $color.G, $color.B)
+    } catch {
+        return $null
+    }
 }
 
 # ===== 処理メイン =====
@@ -100,8 +131,14 @@ function Handle-Request($context) {
                         sheet = $sel.Worksheet.Name
                         address = $sel.Address()
                         value = $sel.Text
-                        font_color = $sel.Font.Color
-                        interior_color = $sel.Interior.Color
+                        font_color = @{
+                            ole = $sel.Font.Color
+                            hex = Convert-OleToHex $sel.Font.Color
+                        }
+                        interior_color = @{
+                            ole = $sel.Interior.Color
+                            hex = Convert-OleToHex $sel.Interior.Color
+                        }
                     }
                 } catch {
                     $result = @{ ok = $false; error = $_.Exception.Message }
@@ -109,9 +146,14 @@ function Handle-Request($context) {
             }
         }
 
-        # --- 選択範囲を着色 ---
-        "^/colorSelection$" {
+        # --- 選択範囲を塗りつぶし (後方互換含む) ---
+        "^/(fillSelection|colorSelection)$" {
             $colorHex = $params.color
+            if (-not $colorHex) {
+                $result = @{ ok = $false; error = "Color parameter is required" }
+                break
+            }
+
             $wb = $global:ActiveWorkbook
             if (-not $wb) { $wb = $excel.ActiveWorkbook }
 
@@ -121,16 +163,51 @@ function Handle-Request($context) {
                 try {
                     $sel = $wb.Application.Selection
                     if ($sel -ne $null) {
-                        $r = [Convert]::ToInt32($colorHex.Substring(1,2),16)
-                        $g = [Convert]::ToInt32($colorHex.Substring(3,2),16)
-                        $b = [Convert]::ToInt32($colorHex.Substring(5,2),16)
-                        $oleColor = ($b -bor ($g -shl 8) -bor ($r -shl 16))
+                        $oleColor = Convert-HexToOleColor $colorHex
                         $sel.Interior.Color = $oleColor
                         $result = @{
                             ok = $true
                             workbook = $wb.Name
                             sheet = $sel.Worksheet.Name
                             range = $sel.Address()
+                            color = $colorHex
+                            target = "fill"
+                        }
+                    } else {
+                        $result = @{ ok = $false; error = "No selection" }
+                    }
+                } catch {
+                    $result = @{ ok = $false; error = $_.Exception.Message }
+                }
+            }
+        }
+
+        # --- 選択範囲のフォント色変更 ---
+        "^/colorFont$" {
+            $colorHex = $params.color
+            if (-not $colorHex) {
+                $result = @{ ok = $false; error = "Color parameter is required" }
+                break
+            }
+
+            $wb = $global:ActiveWorkbook
+            if (-not $wb) { $wb = $excel.ActiveWorkbook }
+
+            if (-not $wb) {
+                $result = @{ ok = $false; error = "No workbook selected" }
+            } else {
+                try {
+                    $sel = $wb.Application.Selection
+                    if ($sel -ne $null) {
+                        $oleColor = Convert-HexToOleColor $colorHex
+                        $sel.Font.Color = $oleColor
+                        $result = @{
+                            ok = $true
+                            workbook = $wb.Name
+                            sheet = $sel.Worksheet.Name
+                            range = $sel.Address()
+                            color = $colorHex
+                            target = "font"
                         }
                     } else {
                         $result = @{ ok = $false; error = "No selection" }
