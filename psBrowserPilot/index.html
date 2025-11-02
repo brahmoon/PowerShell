@@ -177,12 +177,12 @@
                 <textarea id="node-outputs" name="outputs" rows="3" placeholder="Result"></textarea>
               </div>
               <div class="field-group">
-                <label for="node-constants">定数入力（ key | 値 ）</label>
+                <label for="node-constants">定数入力（ Type | Key | Value ）</label>
                 <textarea
                   id="node-constants"
                   name="constants"
                   rows="4"
-                  placeholder="threshold | # TODO: set value"
+                  placeholder="TextBox | threshold | # TODO: set value"
                 ></textarea>
               </div>
               <div class="field-group">
@@ -464,6 +464,29 @@
           .map((line) => sanitizeToken(line))
           .filter((line, index, self) => line && self.indexOf(line) === index);
 
+      const normalizeConstantType = (value) => {
+        const normalized = String(value ?? '').trim().toLowerCase();
+        switch (normalized) {
+          case 'checkbox':
+          case 'check-box':
+            return 'CheckBox';
+          case 'reference':
+          case 'file':
+            return 'Reference';
+          case 'radiobutton':
+          case 'radio':
+            return 'RadioButton';
+          case 'text':
+          case 'text-box':
+          case 'textbox':
+          default:
+            return 'TextBox';
+        }
+      };
+
+      const normalizeBooleanToken = (value) =>
+        /^(true|1|yes|on)$/i.test(String(value ?? '').trim()) ? 'True' : 'False';
+
       const parseConstants = (raw) =>
         String(raw ?? '')
           .split(/\r?\n/)
@@ -471,21 +494,46 @@
           .filter(Boolean)
           .map((line) => {
             const parts = line.split('|').map((part) => part.trim());
-            const key = sanitizeToken(parts[0]);
+            if (!parts.length) return null;
+            let typeToken = 'TextBox';
+            let keyToken = parts[0];
+            let valueToken = CONSTANT_PLACEHOLDER;
+            if (parts.length >= 3) {
+              typeToken = parts[0];
+              keyToken = parts[1];
+              valueToken = parts.slice(2).join('|');
+            } else if (parts.length === 2) {
+              typeToken = 'TextBox';
+              keyToken = parts[0];
+              valueToken = parts[1];
+            }
+            const key = sanitizeToken(keyToken);
             if (!key) return null;
-            const defaultValue =
-              parts.length >= 3
-                ? parts[2]
-                : parts[1]
-                ? parts[1]
-                : CONSTANT_PLACEHOLDER;
-            return { key, default: defaultValue || CONSTANT_PLACEHOLDER };
+            const type = normalizeConstantType(typeToken);
+            const rawValue = valueToken ?? CONSTANT_PLACEHOLDER;
+            const value =
+              type === 'CheckBox' || type === 'RadioButton'
+                ? normalizeBooleanToken(rawValue)
+                : rawValue || CONSTANT_PLACEHOLDER;
+            return { key, type, value };
           })
-          .filter((constant, index, self) => constant && self.findIndex((item) => item.key === constant.key) === index);
+          .filter((constant, index, self) =>
+            constant && self.findIndex((item) => item.key === constant.key) === index
+          );
 
       const formatConstants = (constants) =>
         (constants || [])
-          .map((constant) => `${constant.key} | ${constant.default}`)
+          .map((constant) => {
+            const type = normalizeConstantType(constant?.type || 'TextBox');
+            const key = sanitizeToken(constant?.key ?? '');
+            if (!key) return '';
+            const value =
+              type === 'CheckBox' || type === 'RadioButton'
+                ? normalizeBooleanToken(constant?.value ?? constant?.default)
+                : constant?.value ?? constant?.default ?? CONSTANT_PLACEHOLDER;
+            return `${type} | ${key} | ${value}`.trim();
+          })
+          .filter(Boolean)
           .join('\n');
 
       const cloneSpec = (spec) => {
