@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>psBrowserPilot</title>
+    <link rel="stylesheet" href="../NodeFlow/ui/editor.css" />
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      body.theme-dark {
+        color-scheme: dark;
+      }
+
+      .session-panel {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        background: rgba(45, 55, 72, 0.04);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+      }
+
+      .session-panel label {
+        font-weight: 600;
+      }
+
+      .session-panel input,
+      .session-panel textarea {
+        font: inherit;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        min-width: 220px;
+      }
+
+      .session-panel textarea {
+        min-height: 3.5rem;
+        resize: vertical;
+      }
+
+      .session-panel button {
+        font: inherit;
+        padding: 0.55rem 1.2rem;
+        border-radius: 999px;
+        border: none;
+        cursor: pointer;
+        background: #2563eb;
+        color: #fff;
+        font-weight: 600;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .session-panel button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgba(37, 99, 235, 0.3);
+      }
+
+      .session-panel button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .session-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        background: rgba(100, 116, 139, 0.16);
+        color: #1f2937;
+      }
+
+      body.theme-dark .session-panel {
+        background: rgba(148, 163, 184, 0.08);
+        border-bottom-color: rgba(148, 163, 184, 0.2);
+      }
+
+      body.theme-dark .session-panel input,
+      body.theme-dark .session-panel textarea {
+        background: rgba(15, 23, 42, 0.6);
+        border-color: rgba(148, 163, 184, 0.35);
+        color: inherit;
+      }
+
+      body.theme-dark .session-panel button {
+        background: #3b82f6;
+      }
+
+      body.theme-dark .session-indicator {
+        background: rgba(96, 165, 250, 0.18);
+        color: #e2e8f0;
+      }
+
+      .session-indicator[data-state="ready"] {
+        background: rgba(34, 197, 94, 0.16);
+        color: #166534;
+      }
+
+      .session-indicator[data-state="busy"] {
+        background: rgba(250, 204, 21, 0.18);
+        color: #854d0e;
+      }
+
+      .session-indicator[data-state="error"] {
+        background: rgba(248, 113, 113, 0.18);
+        color: #991b1b;
+      }
+
+      body.theme-dark .session-indicator[data-state="ready"] {
+        color: #bbf7d0;
+      }
+
+      body.theme-dark .session-indicator[data-state="busy"] {
+        color: #fde68a;
+      }
+
+      body.theme-dark .session-indicator[data-state="error"] {
+        color: #fecaca;
+      }
+
+      .execution-panel {
+        background: rgba(248, 250, 252, 0.9);
+        border-top: 1px solid rgba(148, 163, 184, 0.45);
+        padding: 1rem 1.25rem 1.5rem;
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .execution-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .execution-header h2 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+
+      .execution-actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .execution-actions button {
+        font: inherit;
+        padding: 0.4rem 0.9rem;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .execution-output {
+        margin: 0;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: #0f172a;
+        color: #e2e8f0;
+        min-height: 140px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      body.theme-dark .execution-panel {
+        background: rgba(15, 23, 42, 0.85);
+        border-top-color: rgba(148, 163, 184, 0.24);
+      }
+
+      body.theme-dark .execution-actions button {
+        border-color: rgba(148, 163, 184, 0.4);
+        color: inherit;
+      }
+
+      .execution-log {
+        display: grid;
+        gap: 0.75rem;
+        max-height: 220px;
+        overflow: auto;
+      }
+
+      .log-entry {
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        border-radius: 0.75rem;
+        padding: 0.75rem 1rem;
+        background: rgba(255, 255, 255, 0.8);
+      }
+
+      .log-entry.success {
+        border-color: rgba(34, 197, 94, 0.35);
+      }
+
+      .log-entry.error {
+        border-color: rgba(248, 113, 113, 0.4);
+        background: rgba(254, 226, 226, 0.8);
+      }
+
+      .log-entry header {
+        display: flex;
+        justify-content: space-between;
+        font-weight: 600;
+        font-size: 0.95rem;
+        margin-bottom: 0.35rem;
+      }
+
+      .log-entry time {
+        font-size: 0.85rem;
+        opacity: 0.75;
+      }
+
+      .log-entry pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 0.85rem;
+      }
+
+      .log-entry .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.5rem;
+      }
+
+      .log-entry .tag {
+        font-size: 0.75rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.2);
+      }
+
+      .toast {
+        position: fixed;
+        bottom: 1.5rem;
+        right: 1.5rem;
+        background: rgba(15, 23, 42, 0.92);
+        color: #fff;
+        padding: 0.75rem 1.1rem;
+        border-radius: 0.75rem;
+        opacity: 0;
+        transform: translateY(20px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        z-index: 1000;
+        box-shadow: 0 10px 32px rgba(15, 23, 42, 0.35);
+      }
+
+      .toast.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .designer-open .session-panel,
+      .designer-open .execution-panel {
+        filter: blur(1px);
+        pointer-events: none;
+      }
+
+      @media (max-width: 1024px) {
+        .session-panel {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .session-panel input,
+        .session-panel textarea {
+          width: 100%;
+        }
+        .session-panel button {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body class="theme-light">
+    <header class="app-header">
+      <div class="branding">
+        <div class="logo" aria-hidden="true"></div>
+        <h1>psBrowserPilot</h1>
+      </div>
+      <div class="header-actions">
+        <button id="open-designer" type="button">Custom Nodes</button>
+        <button id="load-flow" type="button">Load</button>
+        <button id="save-flow" type="button">Save</button>
+        <button id="clear-flow" type="button">Clear</button>
+        <button id="export-script" class="primary" type="button">Export Script</button>
+        <button id="run-script" class="primary" type="button">Run Script</button>
+      </div>
+    </header>
+
+    <section class="session-panel" aria-label="PowerShell セッション設定">
+      <label for="api-base">API ベース URL</label>
+      <input id="api-base" type="url" placeholder="http://localhost:8085" />
+      <label for="module-preset">ロードするモジュール</label>
+      <textarea id="module-preset" placeholder="例: Microsoft.PowerShell.Management"></textarea>
+      <label for="initial-script">初期化スクリプト</label>
+      <textarea id="initial-script" placeholder="# セッション開始時に実行する PowerShell スクリプト"></textarea>
+      <button id="connect-session" type="button">Connect</button>
+      <button id="disconnect-session" type="button" disabled>Disconnect</button>
+      <span id="session-indicator" class="session-indicator" data-state="idle">Disconnected</span>
+    </section>
+
+    <div class="app-body">
+      <aside class="palette-shell" aria-label="Node palette">
+        <div class="palette" id="node-palette"></div>
+        <div class="palette-status-bar">
+          <button
+            type="button"
+            id="open-settings"
+            class="status-icon"
+            aria-haspopup="dialog"
+            aria-controls="settings-dialog"
+            aria-label="設定を開く"
+            aria-expanded="false"
+          >⚙</button>
+        </div>
+      </aside>
+      <main class="editor" id="editor-area">
+        <canvas id="connection-layer"></canvas>
+        <div id="node-layer" class="node-layer" role="application" aria-label="Node editor"></div>
+      </main>
+    </div>
+
+    <section class="execution-panel" aria-live="polite">
+      <div class="execution-header">
+        <h2>Execution log</h2>
+        <div class="execution-actions">
+          <button id="copy-output" type="button">Copy output</button>
+          <button id="clear-log" type="button">Clear log</button>
+        </div>
+      </div>
+      <pre id="execution-output" class="execution-output">まだ実行されていません。</pre>
+      <div id="execution-log" class="execution-log" role="log" aria-live="polite"></div>
+    </section>
+
+    <dialog id="property-editor">
+      <form method="dialog" id="property-form">
+        <header>
+          <h2 id="property-title">Node Properties</h2>
+        </header>
+        <div class="property-fields" id="property-fields"></div>
+        <menu class="property-actions">
+          <button type="reset" id="property-cancel">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" class="settings-dialog" aria-label="設定">
+      <div class="settings-inner">
+        <header class="settings-header">
+          <h2>設定</h2>
+          <button type="button" id="close-settings" class="settings-close" aria-label="設定を閉じる">
+            ×
+          </button>
+        </header>
+        <div class="settings-content">
+          <div class="settings-group">
+            <span id="theme-toggle-label" class="toggle-field-label">テーマ</span>
+            <label class="toggle-switch" for="theme-toggle">
+              <span class="toggle-text" id="theme-toggle-text">ダークモード</span>
+              <input
+                type="checkbox"
+                id="theme-toggle"
+                aria-labelledby="theme-toggle-label theme-toggle-text"
+              />
+              <span class="toggle-slider" aria-hidden="true"></span>
+            </label>
+          </div>
+          <div class="settings-group">
+            <label for="api-base-settings">API ベース URL</label>
+            <input id="api-base-settings" type="url" placeholder="http://localhost:8085" />
+            <p class="settings-hint">ブラウザからアクセス可能な psBrowserPilot サーバーの URL を入力します。</p>
+          </div>
+          <div class="settings-group">
+            <label for="timeout-seconds">スクリプトのタイムアウト (秒)</label>
+            <input id="timeout-seconds" type="number" min="5" max="3600" step="5" value="120" />
+            <p class="settings-hint">実行時間がタイムアウトを超えるとスクリプトは停止されます。</p>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <template id="node-template">
+      <div class="node" tabindex="0">
+        <header class="node-header">
+          <span class="node-label"></span>
+          <div class="node-actions">
+            <button
+              class="node-open-designer"
+              title="カスタムノードエディタを開く"
+              type="button"
+            >&lt;&gt;</button>
+            <button class="node-config" title="Edit properties" type="button">⚙</button>
+            <button
+              class="node-delete"
+              title="ノードを削除"
+              type="button"
+              aria-label="ノードを削除"
+            >✕</button>
+          </div>
+        </header>
+        <div class="node-ports">
+          <div class="inputs"></div>
+          <div class="outputs"></div>
+        </div>
+      </div>
+    </template>
+
+    <aside id="node-designer" class="designer" aria-hidden="true">
+      <div class="designer-panel">
+        <header class="designer-header">
+          <div>
+            <h2>カスタムノードビルダー</h2>
+            <p class="designer-caption">
+              ノードの入出力ポートとスクリプトを定義し、ブラウザのストレージに保存できます。
+            </p>
+          </div>
+          <button type="button" id="close-designer" class="designer-close" aria-label="Close designer">
+            ×
+          </button>
+        </header>
+        <div class="designer-content">
+          <section class="designer-sidebar">
+            <div class="designer-section">
+              <div class="designer-section-header">
+                <h3>保存済みノード</h3>
+                <button type="button" id="create-node" class="small-button">新規</button>
+              </div>
+              <div id="custom-node-list" class="designer-list" role="list"></div>
+            </div>
+            <div class="designer-section">
+              <h3>サンプル</h3>
+              <p class="designer-hint">サンプルを読み込むとフォームに内容がコピーされます。</p>
+              <div id="sample-node-list" class="designer-list" role="list"></div>
+            </div>
+          </section>
+          <section class="designer-form">
+            <form id="custom-node-form" autocomplete="off">
+              <div class="field-group">
+                <label for="node-label">表示名</label>
+                <input id="node-label" name="label" type="text" placeholder="例: ファイル読込" required />
+              </div>
+              <div class="field-grid">
+                <label>
+                  ノードID
+                  <input id="node-id" name="id" type="text" placeholder="例: file_loader" />
+                </label>
+                <label>
+                  カテゴリ
+                  <input id="node-category" name="category" type="text" placeholder="Custom" />
+                </label>
+              </div>
+              <div class="field-group">
+                <label for="node-inputs">入力ポート（1行につき1件）</label>
+                <textarea id="node-inputs" name="inputs" rows="3" placeholder="InputValue"></textarea>
+              </div>
+              <div class="field-group">
+                <label for="node-outputs">出力ポート（1行につき1件）</label>
+                <textarea id="node-outputs" name="outputs" rows="3" placeholder="Result"></textarea>
+              </div>
+              <div class="field-group">
+                <label for="node-constants">定数入力（ key | 値 ）</label>
+                <textarea
+                  id="node-constants"
+                  name="constants"
+                  rows="4"
+                  placeholder="threshold | # TODO: set value"
+                ></textarea>
+              </div>
+              <div class="field-group">
+                <label for="node-script">スクリプト</label>
+                <textarea
+                  id="node-script"
+                  name="script"
+                  class="code-area"
+                  rows="12"
+                  placeholder="# {{input.Value}} や {{config.threshold}} のようなプレースホルダーを使用できます。"
+                ></textarea>
+              </div>
+              <p id="designer-status" class="designer-status" role="status" aria-live="polite"></p>
+              <div class="designer-actions">
+                <button type="submit" class="primary">保存</button>
+                <button type="button" id="duplicate-node">複製</button>
+                <button type="button" id="reset-form">リセット</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </div>
+    </aside>
+
+    <script type="module">
+      import {
+        listCustomNodeSpecs,
+        saveCustomNodeSpec,
+        deleteCustomNodeSpec,
+        specsToDefinitions,
+        SAMPLE_NODE_TEMPLATES,
+        createEmptySpec,
+      } from '../NodeFlow/core/nodeLibrary.js';
+      import { NodeEditor } from '../NodeFlow/core/nodeEngine.js';
+      import { loadGraph, saveGraph, clearGraph } from '../NodeFlow/storage/fileStore.js';
+      import { exportScript } from '../NodeFlow/export/scriptExport.js';
+
+      const paletteEl = document.getElementById('node-palette');
+      const nodeLayer = document.getElementById('node-layer');
+      const connectionLayer = document.getElementById('connection-layer');
+      const propertyDialog = document.getElementById('property-editor');
+      const propertyForm = document.getElementById('property-form');
+      const propertyFields = document.getElementById('property-fields');
+      const nodeTemplate = document.getElementById('node-template');
+
+      const apiBaseInput = document.getElementById('api-base');
+      const apiBaseSettingsInput = document.getElementById('api-base-settings');
+      const connectButton = document.getElementById('connect-session');
+      const disconnectButton = document.getElementById('disconnect-session');
+      const sessionIndicator = document.getElementById('session-indicator');
+      const modulePresetField = document.getElementById('module-preset');
+      const initialScriptField = document.getElementById('initial-script');
+      const timeoutField = document.getElementById('timeout-seconds');
+      const copyOutputButton = document.getElementById('copy-output');
+      const clearLogButton = document.getElementById('clear-log');
+      const executionOutput = document.getElementById('execution-output');
+      const executionLog = document.getElementById('execution-log');
+
+      let customSpecs = listCustomNodeSpecs();
+      let editor;
+      let sessionId = null;
+      let isConnecting = false;
+
+      const STORAGE_KEYS = {
+        apiBase: 'psbrowserpilot.apiBase',
+        modules: 'psbrowserpilot.modules',
+        initialScript: 'psbrowserpilot.initialScript',
+        timeout: 'psbrowserpilot.timeoutSeconds',
+      };
+
+      const DEFAULT_API_BASE = 'http://localhost:8085';
+
+      const readStoredValue = (key, fallback = '') => {
+        try {
+          const value = localStorage.getItem(key);
+          if (value === null || value === undefined) {
+            return fallback;
+          }
+          return value;
+        } catch (error) {
+          console.warn('Failed to read localStorage key', key, error);
+          return fallback;
+        }
+      };
+
+      const writeStoredValue = (key, value) => {
+        try {
+          if (value === null || value === undefined || value === '') {
+            localStorage.removeItem(key);
+            return;
+          }
+          localStorage.setItem(key, value);
+        } catch (error) {
+          console.warn('Failed to persist localStorage key', key, error);
+        }
+      };
+
+      const parseModuleList = (raw) =>
+        String(raw ?? '')
+          .split(/[,;\r?\n]/)
+          .map((token) => token.trim())
+          .filter(Boolean);
+
+      const setSessionIndicator = (state, text) => {
+        sessionIndicator.dataset.state = state;
+        sessionIndicator.textContent = text;
+      };
+
+      const getApiBase = () => {
+        const base = apiBaseInput.value.trim() || DEFAULT_API_BASE;
+        return base.replace(/\/+$/, '');
+      };
+
+      const getTimeoutSeconds = () => {
+        const value = parseInt(timeoutField?.value, 10);
+        if (Number.isFinite(value) && value >= 5) {
+          return Math.min(value, 3600);
+        }
+        return 120;
+      };
+
+      const showToast = (message) => {
+        if (!message) return;
+        const div = document.createElement('div');
+        div.textContent = message;
+        div.className = 'toast';
+        document.body.appendChild(div);
+        requestAnimationFrame(() => {
+          div.classList.add('visible');
+        });
+        setTimeout(() => {
+          div.classList.remove('visible');
+          setTimeout(() => div.remove(), 240);
+        }, 2200);
+      };
+
+      const appendLogEntry = (result) => {
+        const entry = document.createElement('article');
+        entry.className = `log-entry ${result.success ? 'success' : 'error'}`;
+        const header = document.createElement('header');
+        const title = document.createElement('span');
+        title.textContent = result.success ? 'Success' : 'Failed';
+        const time = document.createElement('time');
+        time.dateTime = result.finishedAt || new Date().toISOString();
+        const ended = result.finishedAt ? new Date(result.finishedAt) : new Date();
+        time.textContent = ended.toLocaleTimeString();
+        header.append(title, time);
+
+        const summary = document.createElement('pre');
+        summary.textContent = result.output?.trim() || '(no output)';
+
+        const tags = document.createElement('div');
+        tags.className = 'tags';
+        const makeTag = (label) => {
+          const span = document.createElement('span');
+          span.className = 'tag';
+          span.textContent = label;
+          return span;
+        };
+        tags.append(makeTag(`exit: ${result.exitCode ?? 0}`));
+        tags.append(makeTag(`duration: ${result.durationMs ?? 0} ms`));
+        if (Array.isArray(result.errors) && result.errors.length) {
+          tags.append(makeTag(`${result.errors.length} errors`));
+        }
+        if (Array.isArray(result.warnings) && result.warnings.length) {
+          tags.append(makeTag(`${result.warnings.length} warnings`));
+        }
+
+        entry.append(header, summary, tags);
+
+        if (Array.isArray(result.errors) && result.errors.length) {
+          const errorBlock = document.createElement('pre');
+          errorBlock.textContent = result.errors.join('\n');
+          entry.append(errorBlock);
+        }
+
+        executionLog.prepend(entry);
+        while (executionLog.children.length > 20) {
+          executionLog.removeChild(executionLog.lastElementChild);
+        }
+      };
+
+      const renderCommandResult = (result) => {
+        const lines = [];
+        lines.push(`# Session: ${result.sessionId || '(unknown)'}`);
+        lines.push(`# Started: ${result.startedAt || 'n/a'}`);
+        lines.push(`# Finished: ${result.finishedAt || 'n/a'}`);
+        lines.push(`# Duration: ${result.durationMs ?? '0'} ms`);
+        lines.push(`# ExitCode: ${result.exitCode ?? 0}`);
+        lines.push(`# Success: ${result.success ? 'true' : 'false'}`);
+        lines.push('');
+        if (result.output) {
+          lines.push('## Output');
+          lines.push(result.output);
+          lines.push('');
+        }
+        if (Array.isArray(result.results) && result.results.length) {
+          lines.push('## Results');
+          result.results.forEach((item, index) => {
+            lines.push(`- [${index}] type=${item.type}`);
+            lines.push(item.value);
+          });
+          lines.push('');
+        }
+        const appendStream = (label, values) => {
+          if (Array.isArray(values) && values.length) {
+            lines.push(`## ${label}`);
+            values.forEach((value) => lines.push(value));
+            lines.push('');
+          }
+        };
+        appendStream('Errors', result.errors);
+        appendStream('Warnings', result.warnings);
+        appendStream('Verbose', result.verbose);
+        appendStream('Debug', result.debug);
+        appendStream('Information', result.information);
+        executionOutput.textContent = lines.join('\n');
+      };
+
+      const disconnectSession = async ({ silent = false } = {}) => {
+        if (!sessionId) {
+          return;
+        }
+        try {
+          const base = getApiBase();
+          const response = await fetch(`${base}/sessions/${sessionId}`, { method: 'DELETE' });
+          if (!response.ok) {
+            console.warn('Failed to delete session', await response.text());
+          }
+        } catch (error) {
+          console.warn('Failed to disconnect session', error);
+        } finally {
+          sessionId = null;
+          disconnectButton.disabled = true;
+          setSessionIndicator('idle', 'Disconnected');
+          if (!silent) {
+            showToast('セッションを破棄しました。');
+          }
+        }
+      };
+
+      const connectSession = async ({ silent = false } = {}) => {
+        if (isConnecting) {
+          return sessionId;
+        }
+        isConnecting = true;
+        setSessionIndicator('busy', 'Connecting...');
+        try {
+          await disconnectSession({ silent: true });
+          const base = getApiBase();
+          const payload = {};
+          const modules = parseModuleList(modulePresetField.value);
+          if (modules.length) {
+            payload.modules = modules;
+          }
+          const initScript = initialScriptField.value.trim();
+          if (initScript) {
+            payload.initialScript = initScript;
+          }
+          const response = await fetch(`${base}/sessions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            let message = `HTTP ${response.status}`;
+            try {
+              const data = await response.json();
+              message = data?.error || message;
+            } catch (error) {
+              message = await response.text();
+            }
+            throw new Error(message || 'Failed to create session');
+          }
+          const data = await response.json();
+          sessionId = data.sessionId;
+          disconnectButton.disabled = false;
+          setSessionIndicator('ready', `Connected (${sessionId.slice(0, 8)}…)`);
+          if (!silent) {
+            showToast('PowerShell セッションを作成しました。');
+          }
+          writeStoredValue(STORAGE_KEYS.apiBase, base);
+          writeStoredValue(STORAGE_KEYS.modules, modulePresetField.value);
+          writeStoredValue(STORAGE_KEYS.initialScript, initialScriptField.value);
+          return sessionId;
+        } finally {
+          isConnecting = false;
+        }
+      };
+
+      const ensureSession = async () => {
+        if (sessionId) {
+          return sessionId;
+        }
+        try {
+          return await connectSession({ silent: true });
+        } catch (error) {
+          setSessionIndicator('error', 'Connect failed');
+          throw error;
+        }
+      };
+
+      const executeWithPowerShell = async (script) => {
+        if (!script) {
+          return {
+            success: false,
+            exitCode: -1,
+            output: '',
+            errors: ['生成されたスクリプトが空です。'],
+          };
+        }
+
+        await ensureSession();
+        const base = getApiBase();
+        const payload = {
+          sessionId,
+          script,
+          timeoutSeconds: getTimeoutSeconds(),
+        };
+
+        const response = await fetch(`${base}/commands`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          let message = `HTTP ${response.status}`;
+          try {
+            const data = await response.json();
+            message = data?.error || message;
+          } catch (error) {
+            message = await response.text();
+          }
+          setSessionIndicator('error', 'Execution failed');
+          return {
+            success: false,
+            exitCode: response.status,
+            output: '',
+            errors: [message || 'PowerShell ブリッジがエラーを返しました。'],
+          };
+        }
+
+        const data = await response.json();
+        setSessionIndicator('ready', `Connected (${sessionId.slice(0, 8)}…)`);
+        return data;
+      };
+
+      const refreshLibrary = ({ persist = true } = {}) => {
+        customSpecs = listCustomNodeSpecs();
+        if (editor) {
+          editor.setLibrary(specsToDefinitions(customSpecs), { persist });
+        }
+        renderCustomNodeList();
+      };
+
+      const designerEl = document.getElementById('node-designer');
+      const openDesignerBtn = document.getElementById('open-designer');
+      const closeDesignerBtn = document.getElementById('close-designer');
+      const newNodeBtn = document.getElementById('create-node');
+      const customListEl = document.getElementById('custom-node-list');
+      const sampleListEl = document.getElementById('sample-node-list');
+      const designerForm = document.getElementById('custom-node-form');
+      const resetFormBtn = document.getElementById('reset-form');
+      const duplicateNodeBtn = document.getElementById('duplicate-node');
+      const designerStatus = document.getElementById('designer-status');
+      const scriptField = document.getElementById('node-script');
+      const openSettingsBtn = document.getElementById('open-settings');
+      const settingsDialog = document.getElementById('settings-dialog');
+      const closeSettingsBtn = document.getElementById('close-settings');
+      const themeToggle = document.getElementById('theme-toggle');
+
+      const THEME_STORAGE_KEY = 'nodeflow.theme';
+      const CONSTANT_PLACEHOLDER = '# TODO: set value';
+
+      const fields = {
+        id: document.getElementById('node-id'),
+        label: document.getElementById('node-label'),
+        category: document.getElementById('node-category'),
+        inputs: document.getElementById('node-inputs'),
+        outputs: document.getElementById('node-outputs'),
+        constants: document.getElementById('node-constants'),
+        script: scriptField,
+      };
+
+      let originalId = '';
+      let designerInitialized = false;
+
+      const applyTheme = (theme) => {
+        const mode = theme === 'dark' ? 'dark' : 'light';
+        document.body.classList.toggle('theme-dark', mode === 'dark');
+        document.body.classList.toggle('theme-light', mode === 'light');
+        document.documentElement.style.setProperty('color-scheme', mode);
+        if (themeToggle) {
+          themeToggle.checked = mode === 'dark';
+        }
+      };
+
+      const detectPreferredTheme = () =>
+        window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+
+      const loadStoredTheme = () => {
+        try {
+          const stored = localStorage.getItem(THEME_STORAGE_KEY);
+          return stored === 'dark' || stored === 'light' ? stored : null;
+        } catch (error) {
+          console.warn('Failed to read theme preference', error);
+          return null;
+        }
+      };
+
+      const persistTheme = (theme) => {
+        try {
+          localStorage.setItem(THEME_STORAGE_KEY, theme);
+        } catch (error) {
+          console.warn('Failed to store theme preference', error);
+        }
+      };
+
+      const initializeTheme = () => {
+        const stored = loadStoredTheme();
+        const initial = stored || detectPreferredTheme();
+        applyTheme(initial);
+      };
+
+      initializeTheme();
+
+      themeToggle?.addEventListener('change', () => {
+        const mode = themeToggle.checked ? 'dark' : 'light';
+        applyTheme(mode);
+        persistTheme(mode);
+      });
+
+      const storedApiBase = readStoredValue(STORAGE_KEYS.apiBase, DEFAULT_API_BASE);
+      apiBaseInput.value = storedApiBase;
+      apiBaseSettingsInput.value = storedApiBase;
+      modulePresetField.value = readStoredValue(STORAGE_KEYS.modules, '');
+      initialScriptField.value = readStoredValue(STORAGE_KEYS.initialScript, '');
+      const storedTimeout = readStoredValue(STORAGE_KEYS.timeout, '120');
+      if (timeoutField) {
+        timeoutField.value = storedTimeout;
+      }
+
+      apiBaseInput.addEventListener('change', () => {
+        writeStoredValue(STORAGE_KEYS.apiBase, apiBaseInput.value.trim());
+        apiBaseSettingsInput.value = apiBaseInput.value.trim();
+      });
+      apiBaseSettingsInput.addEventListener('change', () => {
+        const value = apiBaseSettingsInput.value.trim();
+        apiBaseInput.value = value;
+        writeStoredValue(STORAGE_KEYS.apiBase, value);
+      });
+      modulePresetField.addEventListener('change', () => {
+        writeStoredValue(STORAGE_KEYS.modules, modulePresetField.value);
+      });
+      initialScriptField.addEventListener('change', () => {
+        writeStoredValue(STORAGE_KEYS.initialScript, initialScriptField.value);
+      });
+      timeoutField?.addEventListener('change', () => {
+        writeStoredValue(STORAGE_KEYS.timeout, timeoutField.value);
+      });
+
+      connectButton.addEventListener('click', async () => {
+        try {
+          await connectSession();
+        } catch (error) {
+          setSessionIndicator('error', 'Connect failed');
+          alert(`セッションの作成に失敗しました:\n${error.message}`);
+        }
+      });
+
+      disconnectButton.addEventListener('click', async () => {
+        await disconnectSession();
+      });
+
+      copyOutputButton.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(executionOutput.textContent || '');
+          showToast('出力をコピーしました。');
+        } catch (error) {
+          alert('クリップボードへコピーできませんでした。');
+        }
+      });
+
+      clearLogButton.addEventListener('click', () => {
+        executionOutput.textContent = 'ログをクリアしました。';
+        executionLog.innerHTML = '';
+      });
+
+      const openSettings = () => {
+        if (!settingsDialog) return;
+        if (typeof settingsDialog.showModal === 'function' && !settingsDialog.open) {
+          settingsDialog.showModal();
+          openSettingsBtn?.setAttribute('aria-expanded', 'true');
+        }
+      };
+
+      const closeSettings = ({ returnFocus = false } = {}) => {
+        if (!settingsDialog) return;
+        if (settingsDialog.open) {
+          settingsDialog.close();
+        }
+        openSettingsBtn?.setAttribute('aria-expanded', 'false');
+        if (returnFocus) {
+          openSettingsBtn?.focus();
+        }
+      };
+
+      openSettingsBtn?.addEventListener('click', () => {
+        openSettings();
+      });
+
+      closeSettingsBtn?.addEventListener('click', () => {
+        closeSettings({ returnFocus: true });
+      });
+
+      settingsDialog?.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        closeSettings({ returnFocus: true });
+      });
+
+      settingsDialog?.addEventListener('close', () => {
+        openSettingsBtn?.setAttribute('aria-expanded', 'false');
+      });
+
+      const sanitizeToken = (value) =>
+        String(value ?? '')
+          .trim()
+          .replace(/\s+/g, '_')
+          .replace(/[^A-Za-z0-9_]/g, '_');
+
+      const parsePortList = (raw) =>
+        String(raw ?? '')
+          .split(/\r?\n/)
+          .map((line) => sanitizeToken(line))
+          .filter((line, index, self) => line && self.indexOf(line) === index);
+
+      const parseConstants = (raw) =>
+        String(raw ?? '')
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const parts = line.split('|').map((part) => part.trim());
+            const key = sanitizeToken(parts[0]);
+            if (!key) return null;
+            const defaultValue =
+              parts.length >= 3
+                ? parts[2]
+                : parts[1]
+                ? parts[1]
+                : CONSTANT_PLACEHOLDER;
+            return { key, default: defaultValue || CONSTANT_PLACEHOLDER };
+          })
+          .filter((constant, index, self) => constant && self.findIndex((item) => item.key === constant.key) === index);
+
+      const formatConstants = (constants) =>
+        (constants || [])
+          .map((constant) => `${constant.key} | ${constant.default}`)
+          .join('\n');
+
+      const cloneSpec = (spec) => {
+        if (!spec) return null;
+        return {
+          ...spec,
+          inputs: [...(spec.inputs || [])],
+          outputs: [...(spec.outputs || [])],
+          constants: (spec.constants || []).map((constant) => ({ ...constant })),
+        };
+      };
+
+      const duplicateSpecWithNewId = (spec) => {
+        if (!spec) return null;
+        const clone = cloneSpec(spec);
+        let suffix = 1;
+        let newId = `${spec.id || 'custom_node'}_${suffix}`;
+        while (customSpecs.some((item) => item.id === newId)) {
+          suffix += 1;
+          newId = `${spec.id || 'custom_node'}_${suffix}`;
+        }
+        clone.id = newId;
+        const saved = saveCustomNodeSpec(clone);
+        refreshLibrary();
+        return saved;
+      };
+
+      const removeCustomNodeSpecs = (ids, { skipConfirm = false, silent = false } = {}) => {
+        const specs = customSpecs.filter((spec) => ids.includes(spec.id));
+        if (!specs.length) {
+          return { removedIds: [], cancelled: false };
+        }
+
+        if (!skipConfirm) {
+          const message =
+            specs.length === 1
+              ? `${specs[0].label} を削除しますか？`
+              : `${specs.length} 件のカスタムノードを削除しますか？`;
+          if (!confirm(message)) {
+            return { removedIds: [], cancelled: true };
+          }
+        }
+
+        specs.forEach((spec) => deleteCustomNodeSpec(spec.id));
+        refreshLibrary();
+
+        if (specs.some((spec) => spec.id === originalId)) {
+          if (customSpecs.length) {
+            loadSpecIntoForm(customSpecs[0]);
+          } else {
+            loadSpecIntoForm(createEmptySpec());
+          }
+        }
+
+        if (!silent) {
+          showToast(
+            specs.length === 1
+              ? 'カスタムノードを削除しました。'
+              : `${specs.length}件のカスタムノードを削除しました。`
+          );
+        }
+
+        return {
+          removedIds: specs.map((spec) => spec.id),
+          cancelled: false,
+        };
+      };
+
+      const deleteCustomNodeById = (specId, options = {}) => {
+        const result = removeCustomNodeSpecs([specId], options);
+        if (result.cancelled) {
+          return false;
+        }
+        return result;
+      };
+
+      const deleteCustomNodesByIds = (ids, options = {}) => removeCustomNodeSpecs(ids, options);
+
+      const loadSpecIntoForm = (spec, { fromSample = false } = {}) => {
+        originalId = fromSample ? '' : spec.id || '';
+        fields.label.value = spec.label || '';
+        fields.id.value = fromSample ? '' : spec.id || '';
+        fields.category.value = fromSample ? 'Custom' : spec.category || 'Custom';
+        fields.inputs.value = (spec.inputs || []).join('\n');
+        fields.outputs.value = (spec.outputs || []).join('\n');
+        fields.constants.value = formatConstants(spec.constants || []);
+        fields.script.value = spec.script || '';
+        designerStatus.textContent = fromSample
+          ? 'サンプルノードを読み込みました。編集して保存するとカスタムノードとして登録されます。'
+          : spec.id
+          ? `編集中: ${spec.id}`
+          : '新しいノードを作成しています。';
+      };
+
+      const renderCustomNodeList = () => {
+        customListEl.innerHTML = '';
+        if (!customSpecs.length) {
+          const empty = document.createElement('p');
+          empty.className = 'designer-empty';
+          empty.textContent = 'まだカスタムノードがありません。';
+          customListEl.appendChild(empty);
+          return;
+        }
+        customSpecs.forEach((spec) => {
+          const item = document.createElement('div');
+          item.className = 'designer-list-item';
+          const editButton = document.createElement('button');
+          editButton.type = 'button';
+          editButton.className = 'designer-link';
+          editButton.textContent = spec.label;
+          editButton.addEventListener('click', () => loadSpecIntoForm(spec));
+          const meta = document.createElement('span');
+          meta.className = 'designer-meta';
+          meta.textContent = spec.category || 'Custom';
+          const removeButton = document.createElement('button');
+          removeButton.type = 'button';
+          removeButton.className = 'designer-remove';
+          removeButton.textContent = '削除';
+          removeButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            deleteCustomNodeById(spec.id);
+          });
+          item.append(editButton, meta, removeButton);
+          customListEl.appendChild(item);
+        });
+      };
+
+      const renderSampleList = () => {
+        sampleListEl.innerHTML = '';
+        SAMPLE_NODE_TEMPLATES.forEach((sample) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'designer-sample';
+          button.innerHTML = `<strong>${sample.label}</strong><span>${sample.description}</span>`;
+          button.addEventListener('click', () =>
+            loadSpecIntoForm(
+              {
+                ...sample,
+                id: '',
+                label: sample.label.replace(/^Sample:\s*/i, ''),
+                category: 'Custom',
+                inputs: [...(sample.inputs || [])],
+                outputs: [...(sample.outputs || [])],
+                constants: (sample.constants || []).map((constant) => ({ ...constant })),
+                script: sample.script,
+              },
+              { fromSample: true }
+            )
+          );
+          sampleListEl.appendChild(button);
+        });
+      };
+
+      const ensureDesignerInitialized = () => {
+        if (designerInitialized) return;
+        renderSampleList();
+        if (customSpecs.length) {
+          loadSpecIntoForm(customSpecs[0]);
+        } else {
+          loadSpecIntoForm(createEmptySpec());
+        }
+        designerInitialized = true;
+      };
+
+      const openDesigner = () => {
+        ensureDesignerInitialized();
+        designerEl.classList.add('open');
+        designerEl.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('designer-open');
+        renderCustomNodeList();
+        setTimeout(() => fields.label.focus(), 50);
+        setTimeout(() => editor?.resize(), 260);
+      };
+
+      const openDesignerForSpec = (specId, fallbackSpec) => {
+        ensureDesignerInitialized();
+        const findSpec = () => customSpecs.find((item) => item.id === specId);
+        let spec = findSpec();
+
+        if (!spec && fallbackSpec && fallbackSpec.id === specId) {
+          spec = cloneSpec(fallbackSpec);
+        }
+
+        if (!spec) {
+          refreshLibrary({ persist: false });
+          spec = findSpec();
+        }
+
+        if (spec) {
+          loadSpecIntoForm(spec);
+          designerStatus.textContent = `編集中: ${spec.id}`;
+        } else {
+          loadSpecIntoForm(createEmptySpec());
+          designerStatus.textContent = '指定されたカスタムノードが見つかりません。';
+        }
+        openDesigner();
+      };
+
+      const closeDesigner = () => {
+        designerEl.classList.remove('open');
+        designerEl.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('designer-open');
+        setTimeout(() => editor?.resize(), 260);
+      };
+
+      editor = new NodeEditor({
+        paletteEl,
+        nodeLayer,
+        connectionLayer,
+        propertyDialog,
+        propertyForm,
+        propertyFields,
+        nodeTemplate,
+        library: specsToDefinitions(customSpecs),
+        onGenerateScript: exportScript,
+        onEditCustomNode: openDesignerForSpec,
+        onDuplicatePaletteNode: ({ definitionId }) => {
+          const saved = duplicateCustomNodeById(definitionId);
+          if (!saved) {
+            return null;
+          }
+          const [definition] = specsToDefinitions([saved]);
+          return { id: saved.id, definition };
+        },
+        onRemovePaletteNode: ({
+          definitionId,
+          definitionIds,
+          skipConfirm,
+          silent,
+        }) => {
+          if (Array.isArray(definitionIds) && definitionIds.length) {
+            const result = deleteCustomNodesByIds(definitionIds, {
+              skipConfirm,
+              silent,
+            });
+            if (result.cancelled) {
+              return false;
+            }
+            return { removedIds: result.removedIds };
+          }
+          return deleteCustomNodeById(definitionId, {
+            skipConfirm,
+            silent,
+          });
+        },
+        persistence: {
+          load: loadGraph,
+          save: saveGraph,
+          clear: clearGraph,
+        },
+      });
+
+      window.addEventListener('resize', () => editor.resize());
+
+      document.getElementById('export-script').addEventListener('click', () => editor.exportScript());
+      document.getElementById('run-script').addEventListener('click', async () => {
+        if (!editor) {
+          return;
+        }
+        let builtScript = '';
+        try {
+          builtScript = editor.generateScript();
+        } catch (error) {
+          alert(error.message);
+          return;
+        }
+
+        let result;
+        try {
+          result = await executeWithPowerShell(builtScript);
+        } catch (error) {
+          alert(`PowerShell ブリッジ呼び出し中に例外が発生しました:\n${error.message}`);
+          return;
+        }
+        renderCommandResult(result);
+        appendLogEntry(result);
+        if (!result.success) {
+          alert(`PowerShell 実行時にエラーが発生しました (exit ${result.exitCode ?? 'unknown'}):\n${(result.errors || []).join('\n')}`);
+        } else if (result.output) {
+          showToast('PowerShell スクリプトを実行しました。');
+        }
+      });
+      document.getElementById('save-flow').addEventListener('click', () => editor.persistGraph());
+      document.getElementById('load-flow').addEventListener('click', () => editor.restoreGraph());
+      document.getElementById('clear-flow').addEventListener('click', () => editor.clearGraph());
+
+      openDesignerBtn.addEventListener('click', openDesigner);
+      closeDesignerBtn.addEventListener('click', closeDesigner);
+      window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && designerEl.classList.contains('open')) {
+          closeDesigner();
+        }
+      });
+
+      newNodeBtn.addEventListener('click', () => {
+        loadSpecIntoForm(createEmptySpec());
+        designerStatus.textContent = '新しいノードを作成しています。';
+      });
+
+      duplicateNodeBtn.addEventListener('click', () => {
+        const label = fields.label.value.trim();
+        const spec = {
+          id: sanitizeToken(fields.id.value.trim()) || originalId || sanitizeToken(label).toLowerCase(),
+          label: label || 'Untitled node',
+          category: fields.category.value.trim() || 'Custom',
+          inputs: parsePortList(fields.inputs.value),
+          outputs: parsePortList(fields.outputs.value),
+          constants: parseConstants(fields.constants.value),
+          script: fields.script.value.replace(/\r\n/g, '\n'),
+        };
+        const saved = duplicateSpecWithNewId(spec);
+        if (!saved) {
+          return;
+        }
+        showToast('カスタムノードを複製しました。');
+        refreshLibrary();
+        loadSpecIntoForm(saved);
+      });
+
+      resetFormBtn.addEventListener('click', () => {
+        loadSpecIntoForm(createEmptySpec());
+        designerStatus.textContent = '入力をリセットしました。';
+      });
+
+      scriptField.addEventListener('keydown', (event) => {
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          const { selectionStart, selectionEnd, value } = scriptField;
+          const insertion = '  ';
+          scriptField.value = `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionEnd)}`;
+          const caret = selectionStart + insertion.length;
+          scriptField.selectionStart = caret;
+          scriptField.selectionEnd = caret;
+        }
+      });
+
+      designerForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const label = fields.label.value.trim();
+        let id = sanitizeToken(fields.id.value.trim());
+        if (!id) {
+          id = originalId || sanitizeToken(label).toLowerCase();
+        }
+        if (!id) {
+          id = `custom_node_${Date.now()}`;
+        }
+        const spec = {
+          id,
+          label: label || 'Untitled node',
+          category: fields.category.value.trim() || 'Custom',
+          inputs: parsePortList(fields.inputs.value),
+          outputs: parsePortList(fields.outputs.value),
+          constants: parseConstants(fields.constants.value),
+          script: fields.script.value.replace(/\r\n/g, '\n'),
+        };
+        const existing = customSpecs.find((item) => item.id === spec.id);
+        if (existing && existing.id !== originalId) {
+          const overwrite = confirm('このIDのノードは既に存在します。上書きしますか？');
+          if (!overwrite) {
+            return;
+          }
+        }
+        const saved = saveCustomNodeSpec(spec);
+        showToast('カスタムノードを保存しました (ローカルストレージ)。');
+        refreshLibrary();
+        loadSpecIntoForm(saved);
+      });
+
+      renderCustomNodeList();
+    </script>
+  </body>
+</html>
