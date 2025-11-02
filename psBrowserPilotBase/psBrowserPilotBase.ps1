@@ -51,9 +51,48 @@ function Get-JsonBody {
     }
 
     $encoding = $request.ContentEncoding
-    if (-not $encoding) { $encoding = [System.Text.Encoding]::UTF8 }
+    $contentType = $request.ContentType
 
-    $reader = [System.IO.StreamReader]::new($request.InputStream, $encoding)
+    $charsetSpecified = $false
+    if ($contentType) {
+        try {
+            $parsedContentType = [System.Net.Mime.ContentType]::new($contentType)
+            if ($parsedContentType.CharSet) {
+                $charsetSpecified = $true
+                if (-not $encoding) {
+                    try {
+                        $encoding = [System.Text.Encoding]::GetEncoding($parsedContentType.CharSet)
+                    } catch {
+                        $encoding = $null
+                    }
+                }
+            }
+        } catch {
+            # If the header cannot be parsed, fall back to inspecting the raw string.
+            if ($contentType -match 'charset=') {
+                $charsetSpecified = $true
+                if (-not $encoding) {
+                    try {
+                        $rawCharset = ($contentType -split 'charset=')[1].Split(';')[0].Trim()
+                        if ($rawCharset) {
+                            $encoding = [System.Text.Encoding]::GetEncoding($rawCharset)
+                        }
+                    } catch {
+                        $encoding = $null
+                    }
+                }
+            }
+        }
+    }
+
+    if (-not $charsetSpecified) {
+        # Treat UTF-8 as the default when the client does not specify a charset.
+        $encoding = [System.Text.Encoding]::UTF8
+    } elseif (-not $encoding) {
+        $encoding = [System.Text.Encoding]::UTF8
+    }
+
+    $reader = [System.IO.StreamReader]::new($request.InputStream, $encoding, $true)
     try {
         $raw = $reader.ReadToEnd()
     } finally {
