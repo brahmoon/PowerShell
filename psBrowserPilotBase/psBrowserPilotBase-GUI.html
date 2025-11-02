@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>PowerShell Browser Pilot</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+      --bg: #f5f6fa;
+      --card-bg: #ffffff;
+      --border: #d0d7e2;
+      --accent: #2563eb;
+      --accent-strong: #1d4ed8;
+      --text: #1f2937;
+      --muted: #64748b;
+      --success: #16a34a;
+      --error: #dc2626;
+      --shadow: 0 16px 30px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .app {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+
+    header p {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 220px;
+      resize: vertical;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      padding: 14px 16px;
+      font: inherit;
+      line-height: 1.6;
+      background: #f8fafc;
+      transition: border 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+      background: #fff;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 12px 24px;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.25);
+      background: var(--accent-strong);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .status {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .status.ok {
+      color: var(--success);
+    }
+
+    .status.error {
+      color: var(--error);
+    }
+
+    pre {
+      margin: 0;
+      font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+      font-size: 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 16px;
+      padding: 16px;
+      min-height: 120px;
+    }
+
+    .errors {
+      color: #fee2e2;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>PowerShell Browser Pilot</h1>
+      <p>ブラウザから PowerShell スクリプトを送信し、結果を確認できます。</p>
+    </header>
+
+    <section class="card">
+      <div class="status" id="status">サーバー状態: 未接続</div>
+      <textarea id="script" placeholder="例: Get-Process | Select-Object -First 5"></textarea>
+      <div class="actions">
+        <button id="runBtn">スクリプトを実行</button>
+        <span class="status" id="runStatus"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin:0;font-size:18px;">出力</h2>
+      <pre id="output"></pre>
+      <div class="errors" id="errors"></div>
+    </section>
+  </main>
+
+  <script>
+    const statusLabel = document.getElementById('status');
+    const scriptBox = document.getElementById('script');
+    const runBtn = document.getElementById('runBtn');
+    const runStatus = document.getElementById('runStatus');
+    const output = document.getElementById('output');
+    const errors = document.getElementById('errors');
+
+    async function pingServer() {
+      try {
+        const res = await fetch('http://127.0.0.1:8080/', { method: 'GET' });
+        if (!res.ok) throw new Error('ステータス ' + res.status);
+        const json = await res.json();
+        statusLabel.textContent = `サーバー状態: ${json.message || 'オンライン'}`;
+        statusLabel.classList.remove('error');
+        statusLabel.classList.add('ok');
+      } catch (err) {
+        statusLabel.textContent = 'サーバー状態: 未接続 (' + err.message + ')';
+        statusLabel.classList.remove('ok');
+        statusLabel.classList.add('error');
+      }
+    }
+
+    async function runScript() {
+      const script = scriptBox.value.trim();
+      if (!script) {
+        runStatus.textContent = 'スクリプトを入力してください。';
+        runStatus.classList.remove('ok');
+        runStatus.classList.add('error');
+        return;
+      }
+
+      runBtn.disabled = true;
+      runStatus.textContent = '実行中…';
+      runStatus.classList.remove('error');
+      runStatus.classList.remove('ok');
+      errors.textContent = '';
+      output.textContent = '';
+
+      try {
+        const res = await fetch('http://127.0.0.1:8080/runScript', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ script })
+        });
+
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.error || `HTTP ${res.status}`);
+        }
+        if (json.output) {
+          output.textContent = json.output;
+        } else {
+          output.textContent = '(出力はありません)';
+        }
+
+        if (json.errors && json.errors.length) {
+          errors.textContent = json.errors.join('\n');
+        } else {
+          errors.textContent = '';
+        }
+
+        if (json.ok) {
+          runStatus.textContent = '完了';
+          runStatus.classList.remove('error');
+          runStatus.classList.add('ok');
+        } else {
+          runStatus.textContent = 'エラーが発生しました';
+          runStatus.classList.remove('ok');
+          runStatus.classList.add('error');
+        }
+      } catch (err) {
+        output.textContent = '';
+        errors.textContent = err.message;
+        runStatus.textContent = '通信エラーが発生しました';
+        runStatus.classList.remove('ok');
+        runStatus.classList.add('error');
+      } finally {
+        runBtn.disabled = false;
+      }
+    }
+
+    runBtn.addEventListener('click', runScript);
+    pingServer();
+  </script>
+</body>
+</html>
