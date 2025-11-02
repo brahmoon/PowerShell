@@ -1,0 +1,15 @@
+{
+  "name": "ps-browser-pilot",
+  "version": "1.0.0",
+  "description": "Browser/Electron bundle of the NodeFlow-based PowerShell visual builder.",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.2.0"
+  }
+}

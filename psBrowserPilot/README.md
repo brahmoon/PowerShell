@@ -1,6 +1,6 @@
-# NodeFlow Local
+# psBrowserPilot
 
-NodeFlow Local は、PowerShell Visual Builder を Electron でラップしたデスクトップ版です。既存の Web 版と同じ UI を保ちながら、ローカルファイルの保存・読み込みを OS ネイティブのダイアログで行えるようになりました。
+psBrowserPilot は、NodeFlow Local をベースにした PowerShell Visual Builder のブラウザ／デスクトップ統合パッケージです。既存の Web 版と同じ UI を保ちながら、ローカルファイルの保存・読み込みを OS ネイティブのダイアログで行えるようになりました。
 
 ## 必要要件
 
@@ -9,7 +9,7 @@ NodeFlow Local は、PowerShell Visual Builder を Electron でラップした�
 ## セットアップと起動
 
 ```bash
-cd NodeFlow-Local
+cd psBrowserPilot
 npm install
 npm start
 ```
@@ -21,7 +21,7 @@ npm start
 Electron を使用できない環境では、同梱の `psBrowserPilotLocal.ps1` を実行してローカル HTTP サーバーを起動することでブラウザから利用できます。静的アセットを `http://127.0.0.1:8787/` で配信するため、`file://` 起動時に発生していた CORS エラーを回避できます。
 
 1. Windows で PowerShell を開きます。
-2. リポジトリのルートから `cd NodeFlow-Local` を実行します。
+2. リポジトリのルートから `cd psBrowserPilot` を実行します。
 3. `./psBrowserPilotLocal.ps1` を実行します。
 4. ブラウザで `http://127.0.0.1:8787/` を開きます。
 
