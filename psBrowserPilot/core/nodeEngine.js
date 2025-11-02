@@ -1923,7 +1923,7 @@ export class NodeEditor {
       header.className = 'property-constants-header';
       const title = document.createElement('span');
       title.className = 'property-constants-title';
-      title.textContent = '定数 (Key / Value)';
+      title.textContent = '定数 (Type / Key / Value)';
       header.appendChild(title);
       if (supportsDesigner) {
         const editButton = document.createElement('button');
@@ -1943,12 +1943,151 @@ export class NodeEditor {
       this.propertyFields.appendChild(header);
     }
 
+    const toBoolean = (value) => /^(true|1|yes|on)$/i.test(String(value ?? ''));
+    const electronAPI = typeof window !== 'undefined' ? window.electronAPI : null;
+
     controls.forEach((control) => {
+      const controlKind = control.controlKind || null;
+      const keyLabelText = control.displayKey || control.key;
+      const currentValue = node.config[control.key] ?? control.default ?? '';
+      const inputId = `${node.id}_${control.key}`;
+
+      if (controlKind === 'Reference') {
+        const field = document.createElement('div');
+        field.className = 'property-field property-field-reference';
+        const keyLabel = document.createElement('span');
+        keyLabel.className = 'property-field-key';
+        keyLabel.textContent = keyLabelText;
+        const controlsWrapper = document.createElement('div');
+        controlsWrapper.className = 'property-reference-controls';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'property-field-input';
+        input.name = control.key;
+        input.id = inputId;
+        input.value = currentValue || '';
+        if (control.placeholder) input.placeholder = control.placeholder;
+        input.autocomplete = 'off';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'property-reference-button';
+        button.textContent = '参照';
+        button.addEventListener('click', async (event) => {
+          event.preventDefault();
+          if (electronAPI?.selectLocalFile) {
+            try {
+              const result = await electronAPI.selectLocalFile({});
+              if (!result?.canceled && result?.filePath) {
+                input.value = result.filePath;
+              }
+            } catch (error) {
+              console.error('Failed to select file', error);
+            }
+            return;
+          }
+          const picker = document.createElement('input');
+          picker.type = 'file';
+          picker.style.display = 'none';
+          picker.addEventListener('change', () => {
+            const file = picker.files?.[0];
+            if (file) {
+              input.value = file.path || file.name || '';
+            }
+            picker.remove();
+          });
+          picker.addEventListener('cancel', () => picker.remove(), { once: true });
+          picker.addEventListener('blur', () => picker.remove(), { once: true });
+          document.body.appendChild(picker);
+          picker.click();
+        });
+        controlsWrapper.append(input, button);
+        field.append(keyLabel, controlsWrapper);
+        this.propertyFields.appendChild(field);
+        return;
+      }
+
+      if (controlKind === 'CheckBox') {
+        const field = document.createElement('label');
+        field.className = 'property-field property-field-checkbox';
+        const keyLabel = document.createElement('span');
+        keyLabel.className = 'property-field-key';
+        keyLabel.textContent = keyLabelText;
+        const toggleWrapper = document.createElement('div');
+        toggleWrapper.className = 'property-checkbox-controls';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'property-toggle-input';
+        input.name = control.key;
+        input.id = inputId;
+        input.value = 'True';
+        input.checked = toBoolean(currentValue);
+        const stateLabel = document.createElement('span');
+        stateLabel.className = 'property-toggle-state';
+        stateLabel.textContent = input.checked ? 'True' : 'False';
+        input.addEventListener('change', () => {
+          stateLabel.textContent = input.checked ? 'True' : 'False';
+        });
+        toggleWrapper.append(input, stateLabel);
+        field.htmlFor = inputId;
+        field.append(keyLabel, toggleWrapper);
+        this.propertyFields.appendChild(field);
+        return;
+      }
+
+      if (controlKind === 'RadioButton') {
+        const field = document.createElement('div');
+        field.className = 'property-field property-field-radio';
+        const keyLabel = document.createElement('span');
+        keyLabel.className = 'property-field-key';
+        keyLabel.textContent = keyLabelText;
+        const optionsWrapper = document.createElement('div');
+        optionsWrapper.className = 'property-radio-options';
+        ['True', 'False'].forEach((option) => {
+          const optionId = `${inputId}_${option.toLowerCase()}`;
+          const optionLabel = document.createElement('label');
+          optionLabel.className = 'property-radio-option';
+          optionLabel.htmlFor = optionId;
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = control.key;
+          radio.id = optionId;
+          radio.value = option;
+          radio.checked = toBoolean(currentValue) === (option === 'True');
+          const optionText = document.createElement('span');
+          optionText.textContent = option;
+          optionLabel.append(radio, optionText);
+          optionsWrapper.appendChild(optionLabel);
+        });
+        field.append(keyLabel, optionsWrapper);
+        this.propertyFields.appendChild(field);
+        return;
+      }
+
+      if (controlKind === 'TextBox') {
+        const field = document.createElement('label');
+        field.className = 'property-field';
+        const keyLabel = document.createElement('span');
+        keyLabel.className = 'property-field-key';
+        keyLabel.textContent = keyLabelText;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'property-field-input';
+        input.name = control.key;
+        input.id = inputId;
+        input.value = currentValue || '';
+        if (control.placeholder) input.placeholder = control.placeholder;
+        input.autocomplete = 'off';
+        field.htmlFor = inputId;
+        field.append(keyLabel, input);
+        this.propertyFields.appendChild(field);
+        return;
+      }
+
       const field = document.createElement('label');
       field.className = 'property-field';
       const keyLabel = document.createElement('span');
       keyLabel.className = 'property-field-key';
-      keyLabel.textContent = control.displayKey || control.key;
+      keyLabel.textContent = keyLabelText;
       let input;
       switch (control.type) {
         case 'select':
@@ -1970,10 +2109,9 @@ export class NodeEditor {
           input.type = control.type || 'text';
           input.className = 'property-field-input';
       }
-      const inputId = `${node.id}_${control.key}`;
       input.name = control.key;
       input.id = inputId;
-      input.value = node.config[control.key] ?? control.default ?? '';
+      input.value = currentValue || '';
       if (control.placeholder) input.placeholder = control.placeholder;
       input.autocomplete = 'off';
       field.htmlFor = inputId;
@@ -2001,6 +2139,16 @@ export class NodeEditor {
       event.preventDefault();
       const formData = new FormData(this.propertyForm);
       controls.forEach((control) => {
+        const controlKind = control.controlKind || null;
+        if (controlKind === 'CheckBox') {
+          node.config[control.key] = formData.get(control.key) === 'True' ? 'True' : 'False';
+          return;
+        }
+        if (controlKind === 'RadioButton') {
+          const selected = formData.get(control.key);
+          node.config[control.key] = selected === 'True' ? 'True' : 'False';
+          return;
+        }
         node.config[control.key] = formData.get(control.key) ?? '';
       });
       this.propertyDialog.close();
