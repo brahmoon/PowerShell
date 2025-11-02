@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#+
 .SYNOPSIS
     psBrowserPilot HTTP PowerShell bridge.
@@ -122,8 +122,8 @@ function Convert-StreamRecord {
 
     return [pscustomobject]@{
         message   = $Record.ToString()
-        category  = $Record.CategoryInfo?.Category
-        exception = $Record.Exception?.Message
+        category  = $Record.CategoryInfo.Category
+        exception = $Record.Exception.Message
         fullyQualifiedErrorId = $Record.FullyQualifiedErrorId
     }
 }
