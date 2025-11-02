@@ -4,31 +4,457 @@
 <meta charset="UTF-8">
 <title>Excel Controller</title>
 <style>
-body { font-family: sans-serif; padding: 20px; }
-button, select { margin: 5px; padding: 6px 12px; font-size: 14px; }
-pre { background: #f7f7f7; padding: 10px; border: 1px solid #ccc; }
+  :root {
+    color-scheme: light;
+    --bg: #f5f6fa;
+    --card-bg: #ffffff;
+    --border: #dde1eb;
+    --accent: #2f7cf6;
+    --text: #2a2d34;
+    --muted: #6b7280;
+    --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+    font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .app {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 32px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .app-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .app-header h1 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 600;
+  }
+
+  .app-header p {
+    margin: 0;
+    color: var(--muted);
+  }
+
+  .card {
+    background: var(--card-bg);
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  label {
+    font-size: 14px;
+  }
+
+  select, button, input, textarea {
+    font: inherit;
+  }
+
+  select, input[type="number"], textarea {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: #fdfdff;
+    transition: border 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  select:focus, input[type="number"]:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(47, 124, 246, 0.18);
+  }
+
+  button {
+    border: none;
+    border-radius: 999px;
+    padding: 10px 20px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s ease;
+  }
+
+  button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 18px rgba(47, 124, 246, 0.25);
+  }
+
+  button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  button.ghost {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid rgba(47, 124, 246, 0.2);
+    box-shadow: none;
+  }
+
+  button.ghost:hover:not(:disabled) {
+    background: rgba(47, 124, 246, 0.08);
+  }
+
+  .form-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .muted {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .actions-card {
+    gap: 20px;
+  }
+
+  .actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .color-action {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .selected-color {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .color-chip {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: transparent;
+  }
+
+  .color-code {
+    font-weight: 600;
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 10px;
+  }
+
+  .info-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 14px;
+  }
+
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .info-row span:first-child {
+    color: var(--muted);
+  }
+
+  .info-row span:last-child {
+    font-weight: 600;
+    word-break: break-word;
+  }
+
+  .color-preview {
+    display: grid;
+    gap: 12px;
+  }
+
+  .color-block {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: #f9fafc;
+  }
+
+  .color-block .block-chip {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+  }
+
+  .color-details {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .color-details .label {
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .color-details .hex {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .color-block button {
+    padding: 8px 14px;
+    border-radius: 999px;
+  }
+
+  .raw-json {
+    margin: 0;
+    padding: 16px;
+    background: #0f172a;
+    color: #e2e8f0;
+    border-radius: 14px;
+    font-size: 12px;
+    max-height: 240px;
+    overflow: auto;
+  }
+
+  .palette-card {
+    gap: 24px;
+  }
+
+  .palette-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .palette-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: #fdfdff;
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .palette-item:hover {
+    transform: translateY(-1px);
+    border-color: var(--accent);
+    box-shadow: 0 12px 18px rgba(47, 124, 246, 0.12);
+  }
+
+  .palette-item.active {
+    border-color: var(--accent);
+    box-shadow: 0 12px 24px rgba(47, 124, 246, 0.16);
+  }
+
+  .palette-item .swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    border: 1px solid rgba(0, 0, 0, 0.18);
+  }
+
+  .palette-item .hex {
+    font-weight: 600;
+  }
+
+  .palette-item .caption {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .manual-add {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .manual-add .rgb-inputs {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .manual-add label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .manual-add input {
+    width: 90px;
+  }
+
+  textarea {
+    resize: vertical;
+    min-height: 120px;
+  }
+
+  .json-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .json-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 720px) {
+    .color-action {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .action-buttons {
+      width: 100%;
+      justify-content: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .selected-color {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .palette-item {
+      width: calc(50% - 6px);
+    }
+  }
 </style>
 </head>
 <body>
-  <h1>Excel Controller (PowerShell連携)</h1>
+  <div class="app">
+    <header class="app-header">
+      <h1>Excel Controller (PowerShell連携)</h1>
+      <p>ローカルのExcelとシームレスに連携し、セルの情報取得や色設定を行います。</p>
+    </header>
 
-  <div>
-    <label>操作ブック：</label>
-    <select id="bookSelect"></select>
-    <button id="btnRefresh">更新</button>
+    <section class="card">
+      <div class="section-title">ブック選択</div>
+      <div class="form-row">
+        <label for="bookSelect">操作ブック</label>
+        <select id="bookSelect"></select>
+        <button id="btnRefresh" class="ghost">更新</button>
+      </div>
+      <div class="muted">Excelで開いているブック一覧から対象を選択します。</div>
+    </section>
+
+    <section class="card actions-card">
+      <div class="section-title">操作</div>
+      <div class="actions">
+        <button id="btnGet" class="primary">選択セルの情報取得</button>
+      </div>
+      <div class="color-action">
+        <div class="selected-color">
+          <span class="muted">選択中のカラー</span>
+          <span id="selectedColorChip" class="color-chip"></span>
+          <span id="selectedColorCode" class="color-code muted">未選択</span>
+        </div>
+        <div class="action-buttons">
+          <button id="btnFill" disabled>セルを塗りつぶし</button>
+          <button id="btnFont" disabled>フォントを着色</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card info-card">
+      <div class="section-title">選択セル情報</div>
+      <div id="infoContent" class="info-content muted">セル情報を取得するとここに表示されます。</div>
+      <div id="colorPreviewArea" class="color-preview"></div>
+      <pre id="rawResult" class="raw-json" aria-live="polite" aria-label="取得したJSON結果"></pre>
+    </section>
+
+    <section class="card palette-card">
+      <div class="section-title">カラーパレット</div>
+      <div class="muted">頻繁に使用する色を登録し、ワンクリックでExcelに反映できます。</div>
+      <div id="paletteList" class="palette-list"></div>
+
+      <div class="manual-add">
+        <div class="section-title" style="font-size:14px;">RGBで色を追加</div>
+        <div class="muted">0〜255の数値で指定してください。</div>
+        <div class="rgb-inputs">
+          <label>R
+            <input type="number" id="rgbR" min="0" max="255" placeholder="0-255">
+          </label>
+          <label>G
+            <input type="number" id="rgbG" min="0" max="255" placeholder="0-255">
+          </label>
+          <label>B
+            <input type="number" id="rgbB" min="0" max="255" placeholder="0-255">
+          </label>
+        </div>
+        <button id="btnAddRgb">パレットに追加</button>
+      </div>
+
+      <div class="json-tools">
+        <div class="section-title" style="font-size:14px;">JSONで保存 / 読み込み</div>
+        <textarea id="paletteJson" placeholder='["#FFFFFF", "#2F7CF6"] のように指定します'></textarea>
+        <div class="json-buttons">
+          <button id="btnExportJson" class="ghost">JSON出力</button>
+          <button id="btnImportJson">JSON読み込み</button>
+        </div>
+      </div>
+    </section>
   </div>
-
-  <div style="margin-top:10px;">
-    <button id="btnGet">選択セルの情報取得</button>
-    <button id="btnColor">選択セルを着色</button>
-  </div>
-
-  <pre id="result"></pre>
 
 <script>
 const API = "http://127.0.0.1:8080";
+const PALETTE_KEY = "psExcelPilotPalette";
+
 const bookSelect = document.getElementById("bookSelect");
-const resultBox = document.getElementById("result");
+const infoContent = document.getElementById("infoContent");
+const colorPreviewArea = document.getElementById("colorPreviewArea");
+const rawResult = document.getElementById("rawResult");
+const paletteList = document.getElementById("paletteList");
+const selectedColorChip = document.getElementById("selectedColorChip");
+const selectedColorCode = document.getElementById("selectedColorCode");
+const btnFill = document.getElementById("btnFill");
+const btnFont = document.getElementById("btnFont");
+
+let palette = [];
+let selectedColor = null;
 
 async function callApi(path, data) {
   try {
@@ -44,6 +470,124 @@ async function callApi(path, data) {
   }
 }
 
+function toHexComponent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (n < 0 || n > 255) return null;
+  return Math.round(n).toString(16).padStart(2, "0");
+}
+
+function rgbToHex(r, g, b) {
+  const parts = [toHexComponent(r), toHexComponent(g), toHexComponent(b)];
+  if (parts.includes(null)) return null;
+  return "#" + parts.join("").toUpperCase();
+}
+
+function addColorToPalette(color) {
+  if (!color || !/^#[0-9A-Fa-f]{6}$/.test(color)) {
+    alert("有効なカラーコード (#RRGGBB) を入力してください。");
+    return;
+  }
+  const hex = color.toUpperCase();
+  if (!palette.includes(hex)) {
+    palette.push(hex);
+    savePalette();
+    selectedColor = hex;
+    renderPalette();
+    updateSelectedColorDisplay();
+  } else {
+    selectedColor = hex;
+    updateSelectedColorDisplay();
+    renderPalette();
+  }
+}
+
+function savePalette() {
+  localStorage.setItem(PALETTE_KEY, JSON.stringify(palette));
+}
+
+function loadPalette() {
+  const stored = localStorage.getItem(PALETTE_KEY);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        palette = parsed.filter(c => typeof c === "string" && /^#[0-9A-Fa-f]{6}$/.test(c)).map(c => c.toUpperCase());
+      }
+    } catch (e) {
+      console.warn("パレットの読み込みに失敗しました", e);
+    }
+  }
+  if (palette.length === 0) {
+    palette = ["#FFFFFF", "#FFF2CC", "#E2EFDA", "#DDEBF7", "#FCE4D6", "#CFE2F3"];
+  }
+  if (!selectedColor && palette.length > 0) {
+    selectedColor = palette[0];
+  }
+  renderPalette();
+  updateSelectedColorDisplay();
+}
+
+function renderPalette() {
+  paletteList.innerHTML = "";
+  palette.forEach(color => {
+    const item = document.createElement("div");
+    item.className = "palette-item" + (color === selectedColor ? " active" : "");
+    item.tabIndex = 0;
+
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = color;
+
+    const text = document.createElement("div");
+    text.style.display = "flex";
+    text.style.flexDirection = "column";
+    text.style.gap = "2px";
+
+    const hex = document.createElement("span");
+    hex.className = "hex";
+    hex.textContent = color;
+
+    const caption = document.createElement("span");
+    caption.className = "caption";
+    caption.textContent = "クリックで選択";
+
+    text.append(hex, caption);
+    item.append(swatch, text);
+
+    const selectColor = () => {
+      selectedColor = color;
+      updateSelectedColorDisplay();
+      renderPalette();
+    };
+
+    item.addEventListener("click", selectColor);
+    item.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        selectColor();
+      }
+    });
+
+    paletteList.appendChild(item);
+  });
+}
+
+function updateSelectedColorDisplay() {
+  if (selectedColor) {
+    selectedColorChip.style.background = selectedColor;
+    selectedColorCode.textContent = selectedColor;
+    selectedColorCode.classList.remove("muted");
+  } else {
+    selectedColorChip.style.background = "transparent";
+    selectedColorCode.textContent = "未選択";
+    selectedColorCode.classList.add("muted");
+  }
+  const hasColor = Boolean(selectedColor);
+  btnFill.disabled = !hasColor;
+  btnFont.disabled = !hasColor;
+}
+
 async function refreshBooks() {
   const data = await callApi("/listWorkbooks");
   bookSelect.innerHTML = "";
@@ -54,33 +598,169 @@ async function refreshBooks() {
       opt.value = name;
       bookSelect.appendChild(opt);
     });
+    bookSelect.value = data.workbooks[0];
     await callApi("/setWorkbook", { name: data.workbooks[0] });
   } else {
     const opt = document.createElement("option");
     opt.textContent = "(ブックなし)";
     bookSelect.appendChild(opt);
+    infoContent.textContent = data.error ? data.error : "開いているExcelブックが見つかりません。";
   }
 }
 
-bookSelect.onchange = async () => {
+bookSelect.addEventListener("change", async () => {
   const name = bookSelect.value;
   const res = await callApi("/setWorkbook", { name });
-  resultBox.textContent = JSON.stringify(res, null, 2);
-};
+  if (!res.ok) {
+    infoContent.textContent = res.error || "ブックの切り替えに失敗しました";
+    rawResult.textContent = JSON.stringify(res, null, 2);
+  }
+});
 
-document.getElementById("btnRefresh").onclick = refreshBooks;
-
-document.getElementById("btnGet").onclick = async () => {
+async function handleGetSelection() {
   const res = await callApi("/getSelection");
-  resultBox.textContent = JSON.stringify(res, null, 2);
-};
+  if (res.ok) {
+    renderSelectionInfo(res);
+  } else {
+    infoContent.textContent = res.error || "情報の取得に失敗しました";
+    infoContent.classList.add("muted");
+    colorPreviewArea.innerHTML = "";
+  }
+  rawResult.textContent = JSON.stringify(res, null, 2);
+}
 
-document.getElementById("btnColor").onclick = async () => {
-  const res = await callApi("/colorSelection", { color: "#ffff99" });
-  resultBox.textContent = JSON.stringify(res, null, 2);
-};
+function renderSelectionInfo(data) {
+  infoContent.classList.remove("muted");
+  infoContent.innerHTML = "";
 
-// 初回起動時に一覧取得
+  const entries = [
+    { label: "ブック", value: data.workbook },
+    { label: "シート", value: data.sheet },
+    { label: "アドレス", value: data.address },
+    { label: "表示値", value: data.value }
+  ];
+
+  entries.forEach(({ label, value }) => {
+    const row = document.createElement("div");
+    row.className = "info-row";
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+    const valueEl = document.createElement("span");
+    valueEl.textContent = value ?? "-";
+    row.append(labelEl, valueEl);
+    infoContent.appendChild(row);
+  });
+
+  colorPreviewArea.innerHTML = "";
+  appendColorBlock("塗りつぶし", data.interior_color);
+  appendColorBlock("フォント", data.font_color);
+}
+
+function appendColorBlock(label, colorInfo) {
+  const block = document.createElement("div");
+  block.className = "color-block";
+
+  if (!colorInfo || !colorInfo.hex) {
+    block.textContent = `${label}の色情報は取得できませんでした`;
+    block.classList.add("muted");
+    colorPreviewArea.appendChild(block);
+    return;
+  }
+
+  const chip = document.createElement("div");
+  chip.className = "block-chip";
+  chip.style.background = colorInfo.hex;
+
+  const details = document.createElement("div");
+  details.className = "color-details";
+
+  const labelEl = document.createElement("div");
+  labelEl.className = "label";
+  labelEl.textContent = label;
+
+  const hexEl = document.createElement("div");
+  hexEl.className = "hex";
+  hexEl.textContent = colorInfo.hex.toUpperCase();
+
+  const meta = document.createElement("div");
+  meta.className = "caption";
+  meta.textContent = `OLE: ${colorInfo.ole}`;
+
+  details.append(labelEl, hexEl, meta);
+
+  const addButton = document.createElement("button");
+  addButton.textContent = "パレットに追加";
+  addButton.addEventListener("click", () => addColorToPalette(colorInfo.hex));
+
+  block.append(chip, details, addButton);
+  colorPreviewArea.appendChild(block);
+}
+
+async function applyColor(path) {
+  if (!selectedColor) {
+    alert("パレットから色を選択してください。");
+    return;
+  }
+  const res = await callApi(path, { color: selectedColor });
+  rawResult.textContent = JSON.stringify(res, null, 2);
+  if (!res.ok) {
+    alert(res.error || "色の適用に失敗しました。");
+  } else {
+    await handleGetSelection();
+  }
+}
+
+// Event bindings
+document.getElementById("btnRefresh").addEventListener("click", refreshBooks);
+document.getElementById("btnGet").addEventListener("click", handleGetSelection);
+btnFill.addEventListener("click", () => applyColor("/fillSelection"));
+btnFont.addEventListener("click", () => applyColor("/colorFont"));
+
+document.getElementById("btnAddRgb").addEventListener("click", () => {
+  const r = document.getElementById("rgbR").value;
+  const g = document.getElementById("rgbG").value;
+  const b = document.getElementById("rgbB").value;
+  const hex = rgbToHex(r, g, b);
+  if (!hex) {
+    alert("RGBはいずれも0〜255で指定してください。");
+    return;
+  }
+  addColorToPalette(hex);
+});
+
+document.getElementById("btnExportJson").addEventListener("click", () => {
+  document.getElementById("paletteJson").value = JSON.stringify(palette, null, 2);
+  document.getElementById("paletteJson").focus();
+  document.getElementById("paletteJson").select();
+});
+
+document.getElementById("btnImportJson").addEventListener("click", () => {
+  const text = document.getElementById("paletteJson").value.trim();
+  if (!text) {
+    alert("JSON文字列を入力してください。");
+    return;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) throw new Error("配列ではありません");
+    const sanitized = parsed
+      .filter(c => typeof c === "string" && /^#[0-9A-Fa-f]{6}$/.test(c))
+      .map(c => c.toUpperCase());
+    if (sanitized.length === 0) {
+      throw new Error("有効なカラーコードが含まれていません");
+    }
+    palette = Array.from(new Set(sanitized));
+    selectedColor = palette[0];
+    savePalette();
+    renderPalette();
+    updateSelectedColorDisplay();
+  } catch (e) {
+    alert("JSONの読み込みに失敗しました: " + e.message);
+  }
+});
+
+// 初期化
+loadPalette();
 refreshBooks();
 </script>
 </body>
