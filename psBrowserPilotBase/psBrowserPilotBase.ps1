@@ -1,4 +1,4 @@
-Add-Type -AssemblyName System.Web
+﻿Add-Type -AssemblyName System.Web
 Add-Type -AssemblyName System.Management.Automation
 
 $prefix = "http://127.0.0.1:8080/"
