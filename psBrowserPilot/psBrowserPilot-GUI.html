@@ -3,204 +3,283 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>psBrowserPilot - PowerShell Browser Orchestrator</title>
+    <title>psBrowserPilot</title>
     <link rel="stylesheet" href="../NodeFlow/ui/editor.css" />
     <style>
-      .app-body {
-        display: grid;
-        grid-template-columns: 280px minmax(520px, 1fr) 320px;
-        gap: 12px;
-        padding: 0 16px 24px;
+      :root {
+        color-scheme: light;
       }
 
-      .palette-shell {
-        min-width: 240px;
+      body.theme-dark {
+        color-scheme: dark;
       }
 
-      .editor {
-        position: relative;
-        min-height: 560px;
-      }
-
-      .console-panel {
-        background: var(--surface, rgba(255, 255, 255, 0.82));
-        border-radius: 16px;
-        border: 1px solid rgba(148, 163, 184, 0.32);
-        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
-        padding: 20px 18px;
+      .session-panel {
         display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-
-      .console-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .console-header h2 {
-        margin: 0;
-        font-size: 18px;
-      }
-
-      .console-caption {
-        margin: 4px 0 0;
-        font-size: 12px;
-        color: var(--muted, #64748b);
-      }
-
-      .console-actions {
-        display: flex;
-        gap: 8px;
         flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        background: rgba(45, 55, 72, 0.04);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.4);
       }
 
-      .console-actions button {
+      .session-panel label {
+        font-weight: 600;
+      }
+
+      .session-panel input,
+      .session-panel textarea {
+        font: inherit;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        min-width: 220px;
+      }
+
+      .session-panel textarea {
+        min-height: 3.5rem;
+        resize: vertical;
+      }
+
+      .session-panel button {
+        font: inherit;
+        padding: 0.55rem 1.2rem;
         border-radius: 999px;
-        border: 1px solid rgba(59, 130, 246, 0.25);
-        background: rgba(59, 130, 246, 0.08);
-        color: var(--accent, #2563eb);
-        padding: 6px 14px;
-        font-size: 13px;
+        border: none;
+        cursor: pointer;
+        background: #2563eb;
+        color: #fff;
+        font-weight: 600;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .session-panel button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgba(37, 99, 235, 0.3);
+      }
+
+      .session-panel button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .session-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        background: rgba(100, 116, 139, 0.16);
+        color: #1f2937;
+      }
+
+      body.theme-dark .session-panel {
+        background: rgba(148, 163, 184, 0.08);
+        border-bottom-color: rgba(148, 163, 184, 0.2);
+      }
+
+      body.theme-dark .session-panel input,
+      body.theme-dark .session-panel textarea {
+        background: rgba(15, 23, 42, 0.6);
+        border-color: rgba(148, 163, 184, 0.35);
+        color: inherit;
+      }
+
+      body.theme-dark .session-panel button {
+        background: #3b82f6;
+      }
+
+      body.theme-dark .session-indicator {
+        background: rgba(96, 165, 250, 0.18);
+        color: #e2e8f0;
+      }
+
+      .session-indicator[data-state="ready"] {
+        background: rgba(34, 197, 94, 0.16);
+        color: #166534;
+      }
+
+      .session-indicator[data-state="busy"] {
+        background: rgba(250, 204, 21, 0.18);
+        color: #854d0e;
+      }
+
+      .session-indicator[data-state="error"] {
+        background: rgba(248, 113, 113, 0.18);
+        color: #991b1b;
+      }
+
+      body.theme-dark .session-indicator[data-state="ready"] {
+        color: #bbf7d0;
+      }
+
+      body.theme-dark .session-indicator[data-state="busy"] {
+        color: #fde68a;
+      }
+
+      body.theme-dark .session-indicator[data-state="error"] {
+        color: #fecaca;
+      }
+
+      .execution-panel {
+        background: rgba(248, 250, 252, 0.9);
+        border-top: 1px solid rgba(148, 163, 184, 0.45);
+        padding: 1rem 1.25rem 1.5rem;
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .execution-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .execution-header h2 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+
+      .execution-actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .execution-actions button {
+        font: inherit;
+        padding: 0.4rem 0.9rem;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        background: transparent;
         cursor: pointer;
       }
 
-      .console-actions button:hover {
-        background: rgba(59, 130, 246, 0.16);
+      .execution-output {
+        margin: 0;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: #0f172a;
+        color: #e2e8f0;
+        min-height: 140px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
       }
 
-      .session-meta {
-        display: grid;
-        gap: 6px;
-        font-size: 13px;
-        line-height: 1.5;
+      body.theme-dark .execution-panel {
+        background: rgba(15, 23, 42, 0.85);
+        border-top-color: rgba(148, 163, 184, 0.24);
       }
 
-      .session-meta span {
-        color: var(--muted, #64748b);
-      }
-
-      .session-meta strong {
-        color: var(--text, #1f2937);
-        font-weight: 600;
-      }
-
-      .api-input {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        font-size: 12px;
-      }
-
-      .api-input input {
-        border: 1px solid rgba(148, 163, 184, 0.6);
-        border-radius: 8px;
-        padding: 6px 10px;
-        font-size: 13px;
+      body.theme-dark .execution-actions button {
+        border-color: rgba(148, 163, 184, 0.4);
+        color: inherit;
       }
 
       .execution-log {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        overflow-y: auto;
-        max-height: 420px;
-        padding-right: 4px;
+        display: grid;
+        gap: 0.75rem;
+        max-height: 220px;
+        overflow: auto;
       }
 
       .log-entry {
-        border-radius: 14px;
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        padding: 12px 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        background: rgba(248, 250, 252, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        border-radius: 0.75rem;
+        padding: 0.75rem 1rem;
+        background: rgba(255, 255, 255, 0.8);
       }
 
-      .log-entry--error {
-        border-color: rgba(239, 68, 68, 0.4);
-        background: rgba(254, 226, 226, 0.6);
+      .log-entry.success {
+        border-color: rgba(34, 197, 94, 0.35);
       }
 
-      .log-entry--ok {
-        border-color: rgba(16, 185, 129, 0.35);
-        background: rgba(236, 253, 245, 0.75);
+      .log-entry.error {
+        border-color: rgba(248, 113, 113, 0.4);
+        background: rgba(254, 226, 226, 0.8);
       }
 
-      .log-entry__header {
+      .log-entry header {
         display: flex;
         justify-content: space-between;
-        gap: 8px;
-        align-items: baseline;
-        font-size: 12px;
-        color: var(--muted, #64748b);
-      }
-
-      .log-entry__status {
         font-weight: 600;
+        font-size: 0.95rem;
+        margin-bottom: 0.35rem;
       }
 
-      .log-entry__section h4 {
-        margin: 0 0 4px;
-        font-size: 13px;
-        color: var(--text, #1f2937);
+      .log-entry time {
+        font-size: 0.85rem;
+        opacity: 0.75;
       }
 
-      .log-entry__section pre {
-        background: rgba(15, 23, 42, 0.06);
-        border-radius: 10px;
-        padding: 10px;
+      .log-entry pre {
         margin: 0;
         white-space: pre-wrap;
-        word-break: break-all;
-        font-size: 12px;
+        word-break: break-word;
+        font-size: 0.85rem;
       }
 
-      .stream-list {
-        display: grid;
-        gap: 4px;
-        font-size: 12px;
+      .log-entry .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.5rem;
       }
 
-      .stream-list span {
-        background: rgba(15, 23, 42, 0.08);
-        border-radius: 10px;
-        padding: 6px 8px;
-        display: inline-block;
+      .log-entry .tag {
+        font-size: 0.75rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.2);
       }
 
-      .empty-log {
-        font-size: 12px;
-        color: var(--muted, #94a3b8);
-        text-align: center;
-        padding: 24px 12px;
+      .toast {
+        position: fixed;
+        bottom: 1.5rem;
+        right: 1.5rem;
+        background: rgba(15, 23, 42, 0.92);
+        color: #fff;
+        padding: 0.75rem 1.1rem;
+        border-radius: 0.75rem;
+        opacity: 0;
+        transform: translateY(20px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        z-index: 1000;
+        box-shadow: 0 10px 32px rgba(15, 23, 42, 0.35);
       }
 
-      @media (max-width: 1280px) {
-        .app-body {
-          grid-template-columns: minmax(260px, 1fr);
-          grid-auto-rows: auto;
+      .toast.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .designer-open .session-panel,
+      .designer-open .execution-panel {
+        filter: blur(1px);
+        pointer-events: none;
+      }
+
+      @media (max-width: 1024px) {
+        .session-panel {
+          flex-direction: column;
+          align-items: stretch;
         }
-
-        .console-panel {
-          order: 3;
+        .session-panel input,
+        .session-panel textarea {
+          width: 100%;
         }
-
-        .palette-shell {
-          order: 1;
-        }
-
-        .editor {
-          order: 2;
-          min-height: 480px;
+        .session-panel button {
+          width: 100%;
         }
       }
     </style>
   </head>
-  <body>
+  <body class="theme-light">
     <header class="app-header">
       <div class="branding">
         <div class="logo" aria-hidden="true"></div>
@@ -212,9 +291,21 @@
         <button id="save-flow" type="button">Save</button>
         <button id="clear-flow" type="button">Clear</button>
         <button id="export-script" class="primary" type="button">Export Script</button>
-        <button id="run-script" class="primary" type="button">Run via PowerShell</button>
+        <button id="run-script" class="primary" type="button">Run Script</button>
       </div>
     </header>
+
+    <section class="session-panel" aria-label="PowerShell セッション設定">
+      <label for="api-base">API ベース URL</label>
+      <input id="api-base" type="url" placeholder="http://localhost:8085" />
+      <label for="module-preset">ロードするモジュール</label>
+      <textarea id="module-preset" placeholder="例: Microsoft.PowerShell.Management"></textarea>
+      <label for="initial-script">初期化スクリプト</label>
+      <textarea id="initial-script" placeholder="# セッション開始時に実行する PowerShell スクリプト"></textarea>
+      <button id="connect-session" type="button">Connect</button>
+      <button id="disconnect-session" type="button" disabled>Disconnect</button>
+      <span id="session-indicator" class="session-indicator" data-state="idle">Disconnected</span>
+    </section>
 
     <div class="app-body">
       <aside class="palette-shell" aria-label="Node palette">
@@ -235,35 +326,19 @@
         <canvas id="connection-layer"></canvas>
         <div id="node-layer" class="node-layer" role="application" aria-label="Node editor"></div>
       </main>
-      <aside class="console-panel" id="console-panel" aria-label="Execution console">
-        <div class="console-header">
-          <div>
-            <h2>Execution Console</h2>
-            <p class="console-caption">
-              NodeFlow で組み立てたスクリプトをブラウザ経由で PowerShell に送信し、結果とストリームを確認できます。
-            </p>
-          </div>
-          <div class="console-actions">
-            <button id="new-session" type="button">New session</button>
-            <button id="refresh-history" type="button">Refresh history</button>
-          </div>
-        </div>
-        <label class="api-input" for="api-root">
-          <span>PowerShell API endpoint</span>
-          <input id="api-root" name="api-root" type="text" value="http://127.0.0.1:8080" spellcheck="false" />
-        </label>
-        <div class="session-meta">
-          <span>Session ID: <strong id="session-id">--</strong></span>
-          <span>Status: <strong id="session-status">Disconnected</strong></span>
-          <span>Commands executed: <strong id="command-count">0</strong></span>
-        </div>
-        <div class="execution-log" id="execution-log" role="log" aria-live="polite">
-          <div class="empty-log" id="empty-log">
-            まだ実行履歴がありません。ノードを組み立てて「Run via PowerShell」を押してください。
-          </div>
-        </div>
-      </aside>
     </div>
+
+    <section class="execution-panel" aria-live="polite">
+      <div class="execution-header">
+        <h2>Execution log</h2>
+        <div class="execution-actions">
+          <button id="copy-output" type="button">Copy output</button>
+          <button id="clear-log" type="button">Clear log</button>
+        </div>
+      </div>
+      <pre id="execution-output" class="execution-output">まだ実行されていません。</pre>
+      <div id="execution-log" class="execution-log" role="log" aria-live="polite"></div>
+    </section>
 
     <dialog id="property-editor">
       <form method="dialog" id="property-form">
@@ -298,6 +373,16 @@
               />
               <span class="toggle-slider" aria-hidden="true"></span>
             </label>
+          </div>
+          <div class="settings-group">
+            <label for="api-base-settings">API ベース URL</label>
+            <input id="api-base-settings" type="url" placeholder="http://localhost:8085" />
+            <p class="settings-hint">ブラウザからアクセス可能な psBrowserPilot サーバーの URL を入力します。</p>
+          </div>
+          <div class="settings-group">
+            <label for="timeout-seconds">スクリプトのタイムアウト (秒)</label>
+            <input id="timeout-seconds" type="number" min="5" max="3600" step="5" value="120" />
+            <p class="settings-hint">実行時間がタイムアウトを超えるとスクリプトは停止されます。</p>
           </div>
         </div>
       </div>
@@ -432,330 +517,81 @@
       const propertyForm = document.getElementById('property-form');
       const propertyFields = document.getElementById('property-fields');
       const nodeTemplate = document.getElementById('node-template');
-      const executionLogEl = document.getElementById('execution-log');
-      const emptyLogEl = document.getElementById('empty-log');
-      const sessionIdEl = document.getElementById('session-id');
-      const sessionStatusEl = document.getElementById('session-status');
-      const commandCountEl = document.getElementById('command-count');
-      const newSessionBtn = document.getElementById('new-session');
-      const refreshHistoryBtn = document.getElementById('refresh-history');
-      const apiInput = document.getElementById('api-root');
-      const runButton = document.getElementById('run-script');
+
+      const apiBaseInput = document.getElementById('api-base');
+      const apiBaseSettingsInput = document.getElementById('api-base-settings');
+      const connectButton = document.getElementById('connect-session');
+      const disconnectButton = document.getElementById('disconnect-session');
+      const sessionIndicator = document.getElementById('session-indicator');
+      const modulePresetField = document.getElementById('module-preset');
+      const initialScriptField = document.getElementById('initial-script');
+      const timeoutField = document.getElementById('timeout-seconds');
+      const copyOutputButton = document.getElementById('copy-output');
+      const clearLogButton = document.getElementById('clear-log');
+      const executionOutput = document.getElementById('execution-output');
+      const executionLog = document.getElementById('execution-log');
 
       let customSpecs = listCustomNodeSpecs();
       let editor;
-      const sanitizeApiRoot = (value) => {
-        if (!value) {
-          return '';
-        }
-        const trimmed = value.trim();
-        return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
+      let sessionId = null;
+      let isConnecting = false;
+
+      const STORAGE_KEYS = {
+        apiBase: 'psbrowserpilot.apiBase',
+        modules: 'psbrowserpilot.modules',
+        initialScript: 'psbrowserpilot.initialScript',
+        timeout: 'psbrowserpilot.timeoutSeconds',
       };
 
-      const getApiRoot = () => sanitizeApiRoot(apiInput?.value || 'http://127.0.0.1:8080');
+      const DEFAULT_API_BASE = 'http://localhost:8085';
 
-      const fetchJson = async (url, options = {}) => {
-        const requestInit = { ...options };
-        if (requestInit.body && !requestInit.headers) {
-          requestInit.headers = { 'Content-Type': 'application/json' };
-        } else if (requestInit.body && requestInit.headers) {
-          requestInit.headers = { 'Content-Type': 'application/json', ...requestInit.headers };
-        }
-
-        const response = await fetch(url, requestInit);
-        const raw = await response.text();
-        let data = null;
-        if (raw) {
-          try {
-            data = JSON.parse(raw);
-          } catch (error) {
-            throw new Error(`Invalid JSON response: ${error.message}`);
-          }
-        }
-
-        if (!response.ok) {
-          const message = data?.error || response.statusText || `HTTP ${response.status}`;
-          const err = new Error(message);
-          err.status = response.status;
-          err.payload = data;
-          throw err;
-        }
-
-        return data;
-      };
-
-      const formatDuration = (ms) => {
-        if (typeof ms !== 'number' || Number.isNaN(ms)) {
-          return '';
-        }
-        if (ms >= 1000) {
-          return `${(ms / 1000).toFixed(2)} s`;
-        }
-        return `${ms} ms`;
-      };
-
-      const toLocalTime = (value) => {
-        if (!value) {
-          return '';
-        }
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) {
-          return value;
-        }
-        return date.toLocaleString();
-      };
-
-      const collectMessages = (items, selector = (item) => item) => {
-        if (!Array.isArray(items) || items.length === 0) {
-          return [];
-        }
-        return items
-          .map((item) => {
-            try {
-              const value = selector(item);
-              if (typeof value === 'string') {
-                return value.trim();
-              }
-              if (value && typeof value === 'object' && 'message' in value) {
-                return String(value.message ?? '');
-              }
-              return value ? String(value) : '';
-            } catch (error) {
-              return '';
-            }
-          })
-          .filter((text) => text);
-      };
-
-      const setEmptyLogVisible = (visible) => {
-        if (!emptyLogEl) return;
-        emptyLogEl.style.display = visible ? 'block' : 'none';
-      };
-
-      const clearLog = () => {
-        if (!executionLogEl) return;
-        executionLogEl.querySelectorAll('.log-entry').forEach((entry) => entry.remove());
-        setEmptyLogVisible(true);
-      };
-
-      const createTextSection = (title, text) => {
-        const section = document.createElement('section');
-        section.className = 'log-entry__section';
-        const heading = document.createElement('h4');
-        heading.textContent = title;
-        section.appendChild(heading);
-        const pre = document.createElement('pre');
-        pre.textContent = text || '';
-        section.appendChild(pre);
-        return section;
-      };
-
-      const createListSection = (title, items) => {
-        if (!items || items.length === 0) {
-          return null;
-        }
-        const section = document.createElement('section');
-        section.className = 'log-entry__section';
-        const heading = document.createElement('h4');
-        heading.textContent = title;
-        section.appendChild(heading);
-        const list = document.createElement('div');
-        list.className = 'stream-list';
-        items.forEach((message) => {
-          const span = document.createElement('span');
-          span.textContent = message;
-          list.appendChild(span);
-        });
-        section.appendChild(list);
-        return section;
-      };
-
-      const appendLogEntry = (entry, { prepend = true } = {}) => {
-        if (!entry || !executionLogEl) {
-          return;
-        }
-        setEmptyLogVisible(false);
-
-        const container = document.createElement('article');
-        container.className = 'log-entry';
-        container.classList.add(entry.ok === false || entry.hadErrors ? 'log-entry--error' : 'log-entry--ok');
-
-        const header = document.createElement('header');
-        header.className = 'log-entry__header';
-        const timeSpan = document.createElement('span');
-        timeSpan.textContent = toLocalTime(entry.started);
-        header.appendChild(timeSpan);
-        const durationSpan = document.createElement('span');
-        durationSpan.textContent = formatDuration(entry.durationMs);
-        header.appendChild(durationSpan);
-        const statusSpan = document.createElement('span');
-        statusSpan.className = 'log-entry__status';
-        statusSpan.textContent = entry.ok === false || entry.hadErrors ? 'Error' : 'Success';
-        header.appendChild(statusSpan);
-        container.appendChild(header);
-
-        container.appendChild(createTextSection('Script', entry.script || ''));
-
-        const outputText = entry.result?.outputText?.trim() ||
-          (Array.isArray(entry.result?.output) ? entry.result.output.filter(Boolean).join('\n') : '');
-        container.appendChild(createTextSection('Output', outputText || '(no output)'));
-
-        const streams = entry.result?.streams || {};
-        const progressMessages = collectMessages(streams.progress, (item) => {
-          if (!item || typeof item !== 'object') {
-            return item ? String(item) : '';
-          }
-          const activity = item.activity ? String(item.activity) : '';
-          const status = item.status ? ` - ${item.status}` : '';
-          const percent = typeof item.percent === 'number' && !Number.isNaN(item.percent)
-            ? ` (${item.percent}%)`
-            : '';
-          const combined = `${activity}${status}${percent}`.trim();
-          return combined || JSON.stringify(item);
-        });
-        const streamSections = [
-          ['Errors', collectMessages(streams.error, (item) => item?.message ?? item)],
-          ['Warnings', collectMessages(streams.warning, (item) => item?.message ?? item)],
-          ['Verbose', collectMessages(streams.verbose, (item) => item?.message ?? item)],
-          ['Information', collectMessages(streams.information, (item) => item?.message ?? item)],
-          ['Debug', collectMessages(streams.debug, (item) => item?.message ?? item)],
-          ['Progress', progressMessages],
-        ];
-        streamSections.forEach(([title, items]) => {
-          const section = createListSection(title, items);
-          if (section) {
-            container.appendChild(section);
-          }
-        });
-
-        if (prepend) {
-          executionLogEl.prepend(container);
-        } else {
-          executionLogEl.appendChild(container);
-        }
-
-        const entries = executionLogEl.querySelectorAll('.log-entry');
-        if (entries.length > 200) {
-          entries[entries.length - 1].remove();
-        }
-      };
-
-      const renderHistory = (history = []) => {
-        clearLog();
-        if (!Array.isArray(history) || history.length === 0) {
-          return;
-        }
-        history.forEach((item) => appendLogEntry(item, { prepend: false }));
-      };
-
-      const updateSessionUI = (session, { statusMessage } = {}) => {
-        if (!session) {
-          if (sessionIdEl) sessionIdEl.textContent = '--';
-          if (commandCountEl) commandCountEl.textContent = '0';
-          if (sessionStatusEl) sessionStatusEl.textContent = statusMessage || 'Disconnected';
-          return;
-        }
-        if (sessionIdEl) sessionIdEl.textContent = session.id;
-        if (commandCountEl) commandCountEl.textContent = String(session.commandCount ?? 0);
-        if (sessionStatusEl) sessionStatusEl.textContent = statusMessage || 'Ready';
-      };
-
-      let activeSession = null;
-      let sessionPromise = null;
-
-      const ensureSession = async () => {
-        if (activeSession) {
-          return activeSession;
-        }
-        if (sessionPromise) {
-          return sessionPromise;
-        }
-
-        sessionPromise = (async () => {
-          try {
-            updateSessionUI(null, { statusMessage: 'Connecting…' });
-            const baseUrl = getApiRoot();
-            const payload = {
-              name: 'browser-session',
-              metadata: {
-                client: 'psBrowserPilot',
-                userAgent: navigator.userAgent,
-                createdAt: new Date().toISOString(),
-              },
-            };
-            const response = await fetchJson(`${baseUrl}/sessions`, {
-              method: 'POST',
-              body: JSON.stringify(payload),
-            });
-            if (!response?.session?.id) {
-              throw new Error('Session creation failed.');
-            }
-            activeSession = response.session;
-            updateSessionUI(activeSession, { statusMessage: 'Ready' });
-            renderHistory([]);
-            return activeSession;
-          } catch (error) {
-            activeSession = null;
-            updateSessionUI(null, { statusMessage: 'Disconnected' });
-            throw error;
-          } finally {
-            sessionPromise = null;
-          }
-        })();
-
-        return sessionPromise;
-      };
-
-      const loadHistory = async () => {
-        const session = await ensureSession();
-        const response = await fetchJson(`${getApiRoot()}/sessions/${session.id}/history?limit=100`);
-        if (Array.isArray(response?.history)) {
-          renderHistory(response.history);
-        }
-        if (typeof response?.commandCount === 'number' && activeSession) {
-          activeSession.commandCount = response.commandCount;
-          updateSessionUI(activeSession);
-        }
-        return response;
-      };
-
-      const closeCurrentSession = async ({ silent = false } = {}) => {
-        if (!activeSession) {
-          return;
-        }
-        const session = activeSession;
-        activeSession = null;
-        updateSessionUI(null, { statusMessage: 'Disconnected' });
-        clearLog();
+      const readStoredValue = (key, fallback = '') => {
         try {
-          await fetch(`${getApiRoot()}/sessions/${session.id}`, { method: 'DELETE' });
-        } catch (error) {
-          if (!silent) {
-            console.warn('Failed to close session', error);
+          const value = localStorage.getItem(key);
+          if (value === null || value === undefined) {
+            return fallback;
           }
+          return value;
+        } catch (error) {
+          console.warn('Failed to read localStorage key', key, error);
+          return fallback;
         }
       };
 
-      const executeWithPowerShell = async (script) => {
-        if (!script || !script.trim()) {
-          throw new Error('生成されたスクリプトが空です。');
+      const writeStoredValue = (key, value) => {
+        try {
+          if (value === null || value === undefined || value === '') {
+            localStorage.removeItem(key);
+            return;
+          }
+          localStorage.setItem(key, value);
+        } catch (error) {
+          console.warn('Failed to persist localStorage key', key, error);
         }
-        const session = await ensureSession();
-        const response = await fetchJson(`${getApiRoot()}/sessions/${session.id}/commands`, {
-          method: 'POST',
-          body: JSON.stringify({
-            script,
-            metadata: {
-              source: 'psBrowserPilot',
-              generatedAt: new Date().toISOString(),
-            },
-          }),
-        });
-        if (typeof response?.commandCount === 'number' && activeSession) {
-          activeSession.commandCount = response.commandCount;
-          updateSessionUI(activeSession);
+      };
+
+      const parseModuleList = (raw) =>
+        String(raw ?? '')
+          .split(/[,;\r?\n]/)
+          .map((token) => token.trim())
+          .filter(Boolean);
+
+      const setSessionIndicator = (state, text) => {
+        sessionIndicator.dataset.state = state;
+        sessionIndicator.textContent = text;
+      };
+
+      const getApiBase = () => {
+        const base = apiBaseInput.value.trim() || DEFAULT_API_BASE;
+        return base.replace(/\/+$/, '');
+      };
+
+      const getTimeoutSeconds = () => {
+        const value = parseInt(timeoutField?.value, 10);
+        if (Number.isFinite(value) && value >= 5) {
+          return Math.min(value, 3600);
         }
-        return response;
+        return 120;
       };
 
       const showToast = (message) => {
@@ -770,7 +606,219 @@
         setTimeout(() => {
           div.classList.remove('visible');
           setTimeout(() => div.remove(), 240);
-        }, 1800);
+        }, 2200);
+      };
+
+      const appendLogEntry = (result) => {
+        const entry = document.createElement('article');
+        entry.className = `log-entry ${result.success ? 'success' : 'error'}`;
+        const header = document.createElement('header');
+        const title = document.createElement('span');
+        title.textContent = result.success ? 'Success' : 'Failed';
+        const time = document.createElement('time');
+        time.dateTime = result.finishedAt || new Date().toISOString();
+        const ended = result.finishedAt ? new Date(result.finishedAt) : new Date();
+        time.textContent = ended.toLocaleTimeString();
+        header.append(title, time);
+
+        const summary = document.createElement('pre');
+        summary.textContent = result.output?.trim() || '(no output)';
+
+        const tags = document.createElement('div');
+        tags.className = 'tags';
+        const makeTag = (label) => {
+          const span = document.createElement('span');
+          span.className = 'tag';
+          span.textContent = label;
+          return span;
+        };
+        tags.append(makeTag(`exit: ${result.exitCode ?? 0}`));
+        tags.append(makeTag(`duration: ${result.durationMs ?? 0} ms`));
+        if (Array.isArray(result.errors) && result.errors.length) {
+          tags.append(makeTag(`${result.errors.length} errors`));
+        }
+        if (Array.isArray(result.warnings) && result.warnings.length) {
+          tags.append(makeTag(`${result.warnings.length} warnings`));
+        }
+
+        entry.append(header, summary, tags);
+
+        if (Array.isArray(result.errors) && result.errors.length) {
+          const errorBlock = document.createElement('pre');
+          errorBlock.textContent = result.errors.join('\n');
+          entry.append(errorBlock);
+        }
+
+        executionLog.prepend(entry);
+        while (executionLog.children.length > 20) {
+          executionLog.removeChild(executionLog.lastElementChild);
+        }
+      };
+
+      const renderCommandResult = (result) => {
+        const lines = [];
+        lines.push(`# Session: ${result.sessionId || '(unknown)'}`);
+        lines.push(`# Started: ${result.startedAt || 'n/a'}`);
+        lines.push(`# Finished: ${result.finishedAt || 'n/a'}`);
+        lines.push(`# Duration: ${result.durationMs ?? '0'} ms`);
+        lines.push(`# ExitCode: ${result.exitCode ?? 0}`);
+        lines.push(`# Success: ${result.success ? 'true' : 'false'}`);
+        lines.push('');
+        if (result.output) {
+          lines.push('## Output');
+          lines.push(result.output);
+          lines.push('');
+        }
+        if (Array.isArray(result.results) && result.results.length) {
+          lines.push('## Results');
+          result.results.forEach((item, index) => {
+            lines.push(`- [${index}] type=${item.type}`);
+            lines.push(item.value);
+          });
+          lines.push('');
+        }
+        const appendStream = (label, values) => {
+          if (Array.isArray(values) && values.length) {
+            lines.push(`## ${label}`);
+            values.forEach((value) => lines.push(value));
+            lines.push('');
+          }
+        };
+        appendStream('Errors', result.errors);
+        appendStream('Warnings', result.warnings);
+        appendStream('Verbose', result.verbose);
+        appendStream('Debug', result.debug);
+        appendStream('Information', result.information);
+        executionOutput.textContent = lines.join('\n');
+      };
+
+      const disconnectSession = async ({ silent = false } = {}) => {
+        if (!sessionId) {
+          return;
+        }
+        try {
+          const base = getApiBase();
+          const response = await fetch(`${base}/sessions/${sessionId}`, { method: 'DELETE' });
+          if (!response.ok) {
+            console.warn('Failed to delete session', await response.text());
+          }
+        } catch (error) {
+          console.warn('Failed to disconnect session', error);
+        } finally {
+          sessionId = null;
+          disconnectButton.disabled = true;
+          setSessionIndicator('idle', 'Disconnected');
+          if (!silent) {
+            showToast('セッションを破棄しました。');
+          }
+        }
+      };
+
+      const connectSession = async ({ silent = false } = {}) => {
+        if (isConnecting) {
+          return sessionId;
+        }
+        isConnecting = true;
+        setSessionIndicator('busy', 'Connecting...');
+        try {
+          await disconnectSession({ silent: true });
+          const base = getApiBase();
+          const payload = {};
+          const modules = parseModuleList(modulePresetField.value);
+          if (modules.length) {
+            payload.modules = modules;
+          }
+          const initScript = initialScriptField.value.trim();
+          if (initScript) {
+            payload.initialScript = initScript;
+          }
+          const response = await fetch(`${base}/sessions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            let message = `HTTP ${response.status}`;
+            try {
+              const data = await response.json();
+              message = data?.error || message;
+            } catch (error) {
+              message = await response.text();
+            }
+            throw new Error(message || 'Failed to create session');
+          }
+          const data = await response.json();
+          sessionId = data.sessionId;
+          disconnectButton.disabled = false;
+          setSessionIndicator('ready', `Connected (${sessionId.slice(0, 8)}…)`);
+          if (!silent) {
+            showToast('PowerShell セッションを作成しました。');
+          }
+          writeStoredValue(STORAGE_KEYS.apiBase, base);
+          writeStoredValue(STORAGE_KEYS.modules, modulePresetField.value);
+          writeStoredValue(STORAGE_KEYS.initialScript, initialScriptField.value);
+          return sessionId;
+        } finally {
+          isConnecting = false;
+        }
+      };
+
+      const ensureSession = async () => {
+        if (sessionId) {
+          return sessionId;
+        }
+        try {
+          return await connectSession({ silent: true });
+        } catch (error) {
+          setSessionIndicator('error', 'Connect failed');
+          throw error;
+        }
+      };
+
+      const executeWithPowerShell = async (script) => {
+        if (!script) {
+          return {
+            success: false,
+            exitCode: -1,
+            output: '',
+            errors: ['生成されたスクリプトが空です。'],
+          };
+        }
+
+        await ensureSession();
+        const base = getApiBase();
+        const payload = {
+          sessionId,
+          script,
+          timeoutSeconds: getTimeoutSeconds(),
+        };
+
+        const response = await fetch(`${base}/commands`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          let message = `HTTP ${response.status}`;
+          try {
+            const data = await response.json();
+            message = data?.error || message;
+          } catch (error) {
+            message = await response.text();
+          }
+          setSessionIndicator('error', 'Execution failed');
+          return {
+            success: false,
+            exitCode: response.status,
+            output: '',
+            errors: [message || 'PowerShell ブリッジがエラーを返しました。'],
+          };
+        }
+
+        const data = await response.json();
+        setSessionIndicator('ready', `Connected (${sessionId.slice(0, 8)}…)`);
+        return data;
       };
 
       const refreshLibrary = ({ persist = true } = {}) => {
@@ -858,6 +906,62 @@
         persistTheme(mode);
       });
 
+      const storedApiBase = readStoredValue(STORAGE_KEYS.apiBase, DEFAULT_API_BASE);
+      apiBaseInput.value = storedApiBase;
+      apiBaseSettingsInput.value = storedApiBase;
+      modulePresetField.value = readStoredValue(STORAGE_KEYS.modules, '');
+      initialScriptField.value = readStoredValue(STORAGE_KEYS.initialScript, '');
+      const storedTimeout = readStoredValue(STORAGE_KEYS.timeout, '120');
+      if (timeoutField) {
+        timeoutField.value = storedTimeout;
+      }
+
+      apiBaseInput.addEventListener('change', () => {
+        writeStoredValue(STORAGE_KEYS.apiBase, apiBaseInput.value.trim());
+        apiBaseSettingsInput.value = apiBaseInput.value.trim();
+      });
+      apiBaseSettingsInput.addEventListener('change', () => {
+        const value = apiBaseSettingsInput.value.trim();
+        apiBaseInput.value = value;
+        writeStoredValue(STORAGE_KEYS.apiBase, value);
+      });
+      modulePresetField.addEventListener('change', () => {
+        writeStoredValue(STORAGE_KEYS.modules, modulePresetField.value);
+      });
+      initialScriptField.addEventListener('change', () => {
+        writeStoredValue(STORAGE_KEYS.initialScript, initialScriptField.value);
+      });
+      timeoutField?.addEventListener('change', () => {
+        writeStoredValue(STORAGE_KEYS.timeout, timeoutField.value);
+      });
+
+      connectButton.addEventListener('click', async () => {
+        try {
+          await connectSession();
+        } catch (error) {
+          setSessionIndicator('error', 'Connect failed');
+          alert(`セッションの作成に失敗しました:\n${error.message}`);
+        }
+      });
+
+      disconnectButton.addEventListener('click', async () => {
+        await disconnectSession();
+      });
+
+      copyOutputButton.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(executionOutput.textContent || '');
+          showToast('出力をコピーしました。');
+        } catch (error) {
+          alert('クリップボードへコピーできませんでした。');
+        }
+      });
+
+      clearLogButton.addEventListener('click', () => {
+        executionOutput.textContent = 'ログをクリアしました。';
+        executionLog.innerHTML = '';
+      });
+
       const openSettings = () => {
         if (!settingsDialog) return;
         if (typeof settingsDialog.showModal === 'function' && !settingsDialog.open) {
@@ -937,78 +1041,30 @@
           inputs: [...(spec.inputs || [])],
           outputs: [...(spec.outputs || [])],
           constants: (spec.constants || []).map((constant) => ({ ...constant })),
-          script: spec.script || '',
         };
-      };
-
-      const findSpecById = (id) => customSpecs.find((spec) => spec.id === id);
-
-      const ensureDuplicatedLabel = (label) => {
-        const base = label && label.trim() ? label.trim() : 'Untitled node';
-        return base.endsWith(' (複製)') ? base : `${base} (複製)`;
-      };
-
-      const generateUniqueNodeId = (seedId) => {
-        const existingIds = new Set(customSpecs.map((spec) => spec.id));
-        let base = sanitizeToken(seedId || '');
-        if (!base) {
-          base = 'custom_node';
-        }
-        if (!existingIds.has(base)) {
-          return base;
-        }
-        const match = base.match(/^(.*?)(\d+)?$/);
-        let prefix = match && match[1] !== undefined ? match[1] : base;
-        if (!prefix) {
-          prefix = base || 'custom_node';
-        }
-        let suffix = match && match[2] ? parseInt(match[2], 10) + 1 : 2;
-        if (!Number.isFinite(suffix) || suffix < 1) {
-          suffix = 2;
-        }
-        let candidate = `${prefix}${suffix}`;
-        while (existingIds.has(candidate)) {
-          suffix += 1;
-          candidate = `${prefix}${suffix}`;
-        }
-        return candidate;
       };
 
       const duplicateSpecWithNewId = (spec) => {
         if (!spec) return null;
-        const working = cloneSpec(spec);
-        const preferredBaseId = working.id || sanitizeToken(working.label).toLowerCase();
-        working.id = generateUniqueNodeId(preferredBaseId);
-        working.label = ensureDuplicatedLabel(working.label);
-        working.category = working.category || 'Custom';
-        working.script = working.script || '';
-        return saveCustomNodeSpec(working);
-      };
-
-      const duplicateCustomNodeById = (specId) => {
-        const spec = findSpecById(specId);
-        if (!spec) {
-          return null;
+        const clone = cloneSpec(spec);
+        let suffix = 1;
+        let newId = `${spec.id || 'custom_node'}_${suffix}`;
+        while (customSpecs.some((item) => item.id === newId)) {
+          suffix += 1;
+          newId = `${spec.id || 'custom_node'}_${suffix}`;
         }
-        const saved = duplicateSpecWithNewId(spec);
-        if (saved) {
-          showToast('ノードを複製しました。');
-          refreshLibrary();
-        }
+        clone.id = newId;
+        const saved = saveCustomNodeSpec(clone);
+        refreshLibrary();
         return saved;
       };
 
       const removeCustomNodeSpecs = (ids, { skipConfirm = false, silent = false } = {}) => {
-        const uniqueIds = Array.isArray(ids)
-          ? Array.from(new Set(ids.filter(Boolean)))
-          : [];
-        if (!uniqueIds.length) {
-          return { removedIds: [], cancelled: false };
-        }
-        const specs = uniqueIds.map((id) => findSpecById(id)).filter(Boolean);
+        const specs = customSpecs.filter((spec) => ids.includes(spec.id));
         if (!specs.length) {
           return { removedIds: [], cancelled: false };
         }
+
         if (!skipConfirm) {
           const message =
             specs.length === 1
@@ -1231,7 +1287,7 @@
       window.addEventListener('resize', () => editor.resize());
 
       document.getElementById('export-script').addEventListener('click', () => editor.exportScript());
-      runButton?.addEventListener('click', async () => {
+      document.getElementById('run-script').addEventListener('click', async () => {
         if (!editor) {
           return;
         }
@@ -1242,93 +1298,25 @@
           alert(error.message);
           return;
         }
-        if (!builtScript.trim()) {
-          alert('生成されたスクリプトが空です。');
+
+        let result;
+        try {
+          result = await executeWithPowerShell(builtScript);
+        } catch (error) {
+          alert(`PowerShell ブリッジ呼び出し中に例外が発生しました:\n${error.message}`);
           return;
         }
-
-        runButton.disabled = true;
-        try {
-          const response = await executeWithPowerShell(builtScript);
-          if (!response || !response.command) {
-            alert('PowerShell ブリッジから正しい応答を受信できませんでした。');
-            return;
-          }
-          appendLogEntry(response.command, { prepend: true });
-          if (activeSession) {
-            updateSessionUI(activeSession, { statusMessage: response.ok ? 'Ready' : 'Command failed' });
-          }
-          if (response.ok) {
-            showToast('PowerShell スクリプトを実行しました。');
-          } else {
-            const errors = collectMessages(response.command?.result?.streams?.error, (item) => item?.message ?? item);
-            alert(`PowerShell 実行時にエラーが発生しました。\n${errors.join('\n') || '詳細は Execution Console を確認してください。'}`);
-          }
-        } catch (error) {
-          alert(`PowerShell API 呼び出し中に例外が発生しました:\n${error.message}`);
-        } finally {
-          runButton.disabled = false;
+        renderCommandResult(result);
+        appendLogEntry(result);
+        if (!result.success) {
+          alert(`PowerShell 実行時にエラーが発生しました (exit ${result.exitCode ?? 'unknown'}):\n${(result.errors || []).join('\n')}`);
+        } else if (result.output) {
+          showToast('PowerShell スクリプトを実行しました。');
         }
       });
       document.getElementById('save-flow').addEventListener('click', () => editor.persistGraph());
       document.getElementById('load-flow').addEventListener('click', () => editor.restoreGraph());
       document.getElementById('clear-flow').addEventListener('click', () => editor.clearGraph());
-
-      newSessionBtn?.addEventListener('click', async () => {
-        newSessionBtn.disabled = true;
-        try {
-          await closeCurrentSession({ silent: true });
-          await ensureSession();
-          await loadHistory();
-          showToast('新しいセッションを確立しました。');
-        } catch (error) {
-          alert(`新しいセッションの作成に失敗しました:\n${error.message}`);
-        } finally {
-          newSessionBtn.disabled = false;
-        }
-      });
-
-      refreshHistoryBtn?.addEventListener('click', async () => {
-        refreshHistoryBtn.disabled = true;
-        try {
-          await loadHistory();
-          showToast('履歴を更新しました。');
-        } catch (error) {
-          alert(`履歴の取得に失敗しました:\n${error.message}`);
-        } finally {
-          refreshHistoryBtn.disabled = false;
-        }
-      });
-
-      apiInput?.addEventListener('change', async () => {
-        const endpoint = getApiRoot();
-        if (apiInput) {
-          apiInput.value = endpoint;
-        }
-        try {
-          await closeCurrentSession({ silent: true });
-          await ensureSession();
-          await loadHistory();
-          showToast(`接続先を ${endpoint} に切り替えました。`);
-        } catch (error) {
-          alert(`API エンドポイントへの接続に失敗しました:\n${error.message}`);
-        }
-      });
-
-      window.addEventListener('beforeunload', () => {
-        if (!activeSession) {
-          return;
-        }
-        const endpoint = getApiRoot();
-        fetch(`${endpoint}/sessions/${activeSession.id}`, {
-          method: 'DELETE',
-          keepalive: true,
-        }).catch(() => {});
-      });
-
-      loadHistory().catch((error) => {
-        console.warn('Failed to initialize PowerShell session', error);
-      });
 
       openDesignerBtn.addEventListener('click', openDesigner);
       closeDesignerBtn.addEventListener('click', closeDesigner);
@@ -1413,7 +1401,6 @@
       });
 
       renderCustomNodeList();
-
     </script>
   </body>
 </html>
