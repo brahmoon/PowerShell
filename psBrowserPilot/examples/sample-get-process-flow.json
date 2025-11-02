@@ -1,0 +1,15 @@
+{
+  "description": "Sample flow that queries Get-Process using a configurable node.",
+  "nodes": [
+    {
+      "id": "node_1",
+      "type": "sample_get_process",
+      "position": { "x": 200, "y": 160 },
+      "config": {
+        "processName": "\"pwsh\"",
+        "includeModules": "$false"
+      }
+    }
+  ],
+  "connections": []
+}
