@@ -105,3 +105,23 @@ ipcMain.handle('script:save', async (_event, payload = {}) => {
   await fs.writeFile(filePath, content, 'utf-8');
   return { canceled: false, fileName: path.basename(filePath), fullPath: filePath };
 });
+
+ipcMain.handle('dialog:selectFile', async (_event, payload = {}) => {
+  const defaultPath =
+    typeof payload?.defaultPath === 'string' && payload.defaultPath.trim()
+      ? payload.defaultPath
+      : app.getPath('desktop');
+  const options = {
+    defaultPath,
+    properties: ['openFile'],
+  };
+  if (Array.isArray(payload?.filters) && payload.filters.length) {
+    options.filters = payload.filters;
+  }
+  const { canceled, filePaths } = await dialog.showOpenDialog(options);
+  if (canceled || !filePaths?.length) {
+    return { canceled: true };
+  }
+  const [filePath] = filePaths;
+  return { canceled: false, filePath };
+});
