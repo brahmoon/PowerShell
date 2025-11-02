@@ -1,0 +1,15 @@
+{
+  "name": "nodeflow-local",
+  "version": "1.0.0",
+  "description": "Desktop-packaged version of the NodeFlow visual builder.",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.2.0"
+  }
+}
