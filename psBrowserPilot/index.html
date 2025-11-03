@@ -43,6 +43,19 @@
       </main>
     </div>
 
+    <dialog id="property-editor">
+      <form method="dialog" id="property-form">
+        <header>
+          <h2 id="property-title">Node Properties</h2>
+        </header>
+        <div class="property-fields" id="property-fields"></div>
+        <menu class="property-actions">
+          <button type="reset" id="property-cancel">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </menu>
+      </form>
+    </dialog>
+
     <dialog id="settings-dialog" class="settings-dialog" aria-label="設定">
       <div class="settings-inner">
         <header class="settings-header">
@@ -95,6 +108,7 @@
               title="カスタムノードエディタを開く"
               type="button"
             >&lt;&gt;</button>
+            <button class="node-config" title="Edit properties" type="button">⚙</button>
             <button
               class="node-delete"
               title="ノードを削除"
@@ -103,7 +117,6 @@
             >✕</button>
           </div>
         </header>
-        <div class="node-controls"></div>
         <div class="node-ports">
           <div class="inputs"></div>
           <div class="outputs"></div>
@@ -164,12 +177,12 @@
                 <textarea id="node-outputs" name="outputs" rows="3" placeholder="Result"></textarea>
               </div>
               <div class="field-group">
-                <label for="node-constants">定数入力（ Type | Key | Value ）</label>
+                <label for="node-constants">定数入力（ key | 値 ）</label>
                 <textarea
                   id="node-constants"
                   name="constants"
                   rows="4"
-                  placeholder="TextBox | threshold | # TODO: set value"
+                  placeholder="threshold | # TODO: set value"
                 ></textarea>
               </div>
               <div class="field-group">
@@ -217,6 +230,9 @@
       const paletteEl = document.getElementById('node-palette');
       const nodeLayer = document.getElementById('node-layer');
       const connectionLayer = document.getElementById('connection-layer');
+      const propertyDialog = document.getElementById('property-editor');
+      const propertyForm = document.getElementById('property-form');
+      const propertyFields = document.getElementById('property-fields');
       const nodeTemplate = document.getElementById('node-template');
       const exportButton = document.getElementById('export-script');
       const runButton = document.getElementById('run-script');
@@ -448,155 +464,29 @@
           .map((line) => sanitizeToken(line))
           .filter((line, index, self) => line && self.indexOf(line) === index);
 
-      const normalizeConstantType = (value) => {
-        const normalized = String(value ?? '').trim().toLowerCase();
-        switch (normalized) {
-          case 'checkbox':
-          case 'check-box':
-            return 'CheckBox';
-          case 'reference':
-          case 'file':
-            return 'Reference';
-          case 'radiobutton':
-          case 'radio':
-            return 'RadioButton';
-          case 'select':
-          case 'selectbox':
-          case 'select-box':
-            return 'SelectBox';
-          case 'text':
-          case 'text-box':
-          case 'textbox':
-          default:
-            return 'TextBox';
-        }
-      };
-
-      const normalizeBooleanToken = (value) =>
-        /^(true|1|yes|on)$/i.test(String(value ?? '').trim()) ? 'True' : 'False';
-
-      const parseConstants = (raw) => {
-        const byKey = new Map();
+      const parseConstants = (raw) =>
         String(raw ?? '')
           .split(/\r?\n/)
           .map((line) => line.trim())
           .filter(Boolean)
-          .forEach((line) => {
+          .map((line) => {
             const parts = line.split('|').map((part) => part.trim());
-            if (!parts.length) return;
-            let typeToken = 'TextBox';
-            let keyToken = parts[0];
-            let valueToken = CONSTANT_PLACEHOLDER;
-            if (parts.length >= 3) {
-              typeToken = parts[0];
-              keyToken = parts[1];
-              valueToken = parts.slice(2).join('|');
-            } else if (parts.length === 2) {
-              keyToken = parts[0];
-              valueToken = parts[1];
-            }
-            const key = sanitizeToken(keyToken);
-            if (!key) return;
-            const type = normalizeConstantType(typeToken);
-            const rawValue = valueToken ?? CONSTANT_PLACEHOLDER;
-            if (type === 'SelectBox') {
-              const optionValue = String(rawValue ?? '').trim();
-              if (!optionValue) {
-                return;
-              }
-              const existing = byKey.get(key);
-              if (existing) {
-                if (existing.type !== 'SelectBox') {
-                  return;
-                }
-                if (!existing.options.includes(optionValue)) {
-                  existing.options.push(optionValue);
-                }
-                if (!existing.value) {
-                  existing.value = optionValue;
-                }
-              } else {
-                byKey.set(key, {
-                  key,
-                  type,
-                  value: optionValue,
-                  options: [optionValue],
-                });
-              }
-              return;
-            }
-            if (type === 'CheckBox' || type === 'RadioButton') {
-              byKey.set(key, {
-                key,
-                type,
-                value: normalizeBooleanToken(rawValue),
-              });
-              return;
-            }
-            byKey.set(key, {
-              key,
-              type,
-              value: rawValue || CONSTANT_PLACEHOLDER,
-            });
-          });
-        return Array.from(byKey.values()).map((constant) => {
-          if (constant.type === 'SelectBox') {
-            const options = Array.isArray(constant.options) ? constant.options : [];
-            const unique = options.filter(
-              (option, index, self) => option && self.indexOf(option) === index
-            );
-            const preferred = unique.includes(constant.value) ? constant.value : unique[0] || '';
-            return {
-              key: constant.key,
-              type: constant.type,
-              value: preferred,
-              options: unique,
-            };
-          }
-          return constant;
-        });
-      };
+            const key = sanitizeToken(parts[0]);
+            if (!key) return null;
+            const defaultValue =
+              parts.length >= 3
+                ? parts[2]
+                : parts[1]
+                ? parts[1]
+                : CONSTANT_PLACEHOLDER;
+            return { key, default: defaultValue || CONSTANT_PLACEHOLDER };
+          })
+          .filter((constant, index, self) => constant && self.findIndex((item) => item.key === constant.key) === index);
 
       const formatConstants = (constants) =>
         (constants || [])
-          .reduce((lines, constant) => {
-            const type = normalizeConstantType(constant?.type || 'TextBox');
-            const key = sanitizeToken(constant?.key ?? '');
-            if (!key) return lines;
-            if (type === 'SelectBox') {
-              const values = Array.from(
-                new Set(
-                  [
-                    ...(Array.isArray(constant?.options) ? constant.options : []),
-                    constant?.value,
-                  ].map((option) => String(option ?? '').trim())
-                )
-              ).filter(Boolean);
-              values.forEach((option) => {
-                lines.push(`${type} | ${key} | ${option}`);
-              });
-              return lines;
-            }
-            const value =
-              type === 'CheckBox' || type === 'RadioButton'
-                ? normalizeBooleanToken(constant?.value ?? constant?.default)
-                : constant?.value ?? constant?.default ?? CONSTANT_PLACEHOLDER;
-            lines.push(`${type} | ${key} | ${value}`.trim());
-            return lines;
-          }, [])
+          .map((constant) => `${constant.key} | ${constant.default}`)
           .join('\n');
-
-      const cloneConstants = (constants) =>
-        (constants || []).map((constant) =>
-          constant
-            ? {
-                ...constant,
-                options: Array.isArray(constant.options)
-                  ? [...constant.options]
-                  : constant.options,
-              }
-            : constant
-        );
 
       const cloneSpec = (spec) => {
         if (!spec) return null;
@@ -604,7 +494,7 @@
           ...spec,
           inputs: [...(spec.inputs || [])],
           outputs: [...(spec.outputs || [])],
-          constants: cloneConstants(spec.constants || []),
+          constants: (spec.constants || []).map((constant) => ({ ...constant })),
           script: spec.script || '',
         };
       };
@@ -787,7 +677,7 @@
                 category: 'Custom',
                 inputs: [...(sample.inputs || [])],
                 outputs: [...(sample.outputs || [])],
-                constants: cloneConstants(sample.constants || []),
+                constants: (sample.constants || []).map((constant) => ({ ...constant })),
                 script: sample.script,
               },
               { fromSample: true }
@@ -853,6 +743,9 @@
         paletteEl,
         nodeLayer,
         connectionLayer,
+        propertyDialog,
+        propertyForm,
+        propertyFields,
         nodeTemplate,
         library: specsToDefinitions(customSpecs),
         onGenerateScript: exportScript,
