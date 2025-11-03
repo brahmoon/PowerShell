@@ -7,49 +7,6 @@ const NODE_ENDPOINTS = {
 };
 
 const DEFAULT_CONSTANT_PLACEHOLDER = '# TODO: set value';
-const DEFAULT_UI_MARKUP = [
-  '<div class="custom-ui-node">',
-  '  <!-- Build your custom node UI here -->',
-  '</div>',
-].join('\n');
-const DEFAULT_UI_SCRIPT = [
-  "// The context argument provides helpers like updateConfig, resolveInput, and toPowerShellLiteral.",
-  "// Update outputs by calling updateConfig('Result', toPowerShellLiteral('value')).",
-  'const { controls, updateConfig, toPowerShellLiteral } = context;',
-  'if (controls) {',
-  "  const button = controls.querySelector('button');",
-  '  const status = controls.querySelector("[data-status]");',
-  '  if (button && status) {',
-  "    let active = context.node?.config?.Result__raw === 'true';",
-  '    const apply = (value) => {',
-  '      active = value;',
-  "      status.textContent = value ? 'ON' : 'OFF';",
-  "      button.textContent = value ? 'Turn OFF' : 'Turn ON';",
-  "      updateConfig('Result__raw', value ? 'true' : 'false', { silent: true });",
-  "      updateConfig('Result', toPowerShellLiteral(value ? 'true' : 'false'));",
-  '    };',
-  '    apply(active);',
-  "    button.addEventListener('click', () => apply(!active));",
-  '    return () => {',
-  "      button.replaceWith(button.cloneNode(true));",
-  '    };',
-  '  }',
-  '}',
-].join('\n');
-const DEFAULT_UI_STYLE = [
-  '/* Styles applied to the custom UI node sample */',
-  '.custom-ui-node {',
-  '  display: inline-flex;',
-  '  align-items: center;',
-  '  gap: 0.75rem;',
-  '}',
-  '.custom-ui-node button {',
-  '  padding: 0.25rem 0.75rem;',
-  '}',
-  '.custom-ui-node [data-status] {',
-  '  font-weight: 600;',
-  '}',
-].join('\n');
 const CONTROL_TYPES = new Map(
   [
     ['text', 'TextBox'],
@@ -93,19 +50,6 @@ const normalizeExecutionMode = (value) =>
     .toLowerCase() === 'ui'
     ? 'ui'
     : 'powershell';
-
-const normalizeUiSpec = (ui) => {
-  if (!ui || typeof ui !== 'object') {
-    return { markup: '', script: '', style: '' };
-  }
-  const normalizeText = (value) =>
-    typeof value === 'string' ? value.replace(/\r\n/g, '\n') : '';
-  return {
-    markup: normalizeText(ui.markup),
-    script: normalizeText(ui.script),
-    style: normalizeText(ui.style),
-  };
-};
 
 const normalizeList = (value) => {
   if (Array.isArray(value)) {
@@ -214,7 +158,6 @@ const normalizeSpec = (spec, previous = null) => {
     outputs: normalizeList(spec?.outputs),
     constants: normalizeConstants(spec?.constants),
     script: typeof spec?.script === 'string' ? spec.script.replace(/\r\n/g, '\n') : '',
-    ui: normalizeUiSpec(spec?.ui),
     description: typeof spec?.description === 'string' ? spec.description : '',
     createdAt: previous?.createdAt || spec?.createdAt || now,
     updatedAt: spec?.updatedAt || previous?.updatedAt || now,
@@ -293,92 +236,6 @@ const createScriptFunction = (template) => {
     });
 };
 
-const createUiRenderer = (spec) => {
-  const ui = spec?.ui || {};
-  const markup = typeof ui.markup === 'string' ? ui.markup : '';
-  const script = typeof ui.script === 'string' ? ui.script : '';
-  const style = typeof ui.style === 'string' ? ui.style : '';
-
-  const normalizedMarkup = markup.replace(/\r\n/g, '\n');
-  const normalizedScript = script.replace(/\r\n/g, '\n');
-  const normalizedStyle = style.replace(/\r\n/g, '\n');
-
-  let compiled = null;
-  if (normalizedScript.trim()) {
-    try {
-      compiled = new Function(
-        'context',
-        `'use strict';\n${normalizedScript}\n`
-      );
-    } catch (error) {
-      console.error('Failed to compile custom UI node script', error);
-    }
-  }
-
-  let styleElement = null;
-  const ensureStylesheet = () => {
-    if (!normalizedStyle.trim()) {
-      return null;
-    }
-    if (styleElement && styleElement.isConnected) {
-      return styleElement;
-    }
-    const doc = typeof document !== 'undefined' ? document : null;
-    if (!doc) {
-      return null;
-    }
-    styleElement = doc.createElement('style');
-    styleElement.type = 'text/css';
-    if (spec?.id) {
-      styleElement.dataset.customNode = spec.id;
-    }
-    styleElement.textContent = normalizedStyle;
-    doc.head?.appendChild(styleElement);
-    return styleElement;
-  };
-
-  return (context) => {
-    const doc = context?.controls?.ownerDocument || (typeof document !== 'undefined' ? document : null);
-    if (context?.controls) {
-      context.controls.innerHTML = normalizedMarkup;
-    }
-    const activeStyle = ensureStylesheet();
-    if (!compiled) {
-      return () => {};
-    }
-    let teardown = null;
-    try {
-      const result = compiled({
-        ...context,
-        markup: normalizedMarkup,
-        styleElement: activeStyle,
-        document: doc,
-      });
-      if (typeof result === 'function') {
-        teardown = result;
-      }
-    } catch (error) {
-      console.error('Failed to execute custom UI node script', error);
-      if (context?.controls && doc) {
-        const errorEl = doc.createElement('div');
-        errorEl.className = 'custom-node-error';
-        errorEl.textContent = `UI script error: ${error.message}`;
-        context.controls.innerHTML = '';
-        context.controls.appendChild(errorEl);
-      }
-    }
-    return () => {
-      if (typeof teardown === 'function') {
-        try {
-          teardown();
-        } catch (disposeError) {
-          console.warn('Failed to dispose custom UI node', disposeError);
-        }
-      }
-    };
-  };
-};
-
 export const SAMPLE_NODE_TEMPLATES = [
   {
     id: 'sample_log_message',
@@ -447,81 +304,13 @@ export const SAMPLE_NODE_TEMPLATES = [
       '{{output.Result}} = $__sb.Invoke({{input.ScriptInput}})',
     ].join('\n'),
   },
-  {
-    id: 'sample_ui_toggle_output',
-    label: 'Sample UI: Toggle Output',
-    category: 'Samples',
-    execution: 'ui',
-    description: 'Example GUI node that toggles a boolean output from the designer.',
-    inputs: [],
-    outputs: ['IsEnabled'],
-    constants: [],
-    ui: {
-      markup: [
-        '<div class="custom-ui-node sample-toggle-node">',
-        '  <button type="button" data-role="toggle">有効にする</button>',
-        '  <span data-status>OFF</span>',
-        '</div>',
-      ].join('\n'),
-      script: [
-        'const { node, controls, updateConfig, toPowerShellLiteral } = context;',
-        'if (!controls) {',
-        '  return;',
-        '}',
-        'const button = controls.querySelector("[data-role=\"toggle\"]");',
-        'const status = controls.querySelector("[data-status]");',
-        'if (!button || !status) {',
-        '  return;',
-        '}',
-        "let current = (node?.config?.IsEnabled__raw || '').toLowerCase() === 'true';",
-        'const renderState = (value) => {',
-        "  status.textContent = value ? 'ON' : 'OFF';",
-        "  button.textContent = value ? '無効にする' : '有効にする';",
-        "  updateConfig('IsEnabled__raw', value ? 'true' : 'false', { silent: true });",
-        "  updateConfig('IsEnabled', toPowerShellLiteral(value ? 'true' : 'false'));",
-        '};',
-        'renderState(current);',
-        'const handleClick = () => {',
-        '  current = !current;',
-        '  renderState(current);',
-        '};',
-        'button.addEventListener(\'click\', handleClick);',
-        'return () => button.removeEventListener(\'click\', handleClick);',
-      ].join('\n'),
-      style: [
-        '.sample-toggle-node {',
-        '  display: inline-flex;',
-        '  align-items: center;',
-        '  gap: 0.75rem;',
-        '  background: rgba(59, 130, 246, 0.12);',
-        '  padding: 0.5rem 0.75rem;',
-        '  border-radius: 0.75rem;',
-        '}',
-        '.sample-toggle-node button {',
-        '  padding: 0.3rem 0.9rem;',
-        '  border-radius: 999px;',
-        '  border: none;',
-        '  background: #2563eb;',
-        '  color: #fff;',
-        '  cursor: pointer;',
-        '}',
-        '.sample-toggle-node button:hover {',
-        '  background: #1d4ed8;',
-        '}',
-        '.sample-toggle-node [data-status] {',
-        '  font-weight: 600;',
-        '  letter-spacing: 0.05em;',
-        '}',
-      ].join('\n'),
-    },
-  },
 ];
 
-export const createEmptySpec = (execution = 'powershell') => ({
+export const createEmptySpec = () => ({
   id: '',
   label: '',
   category: 'Custom',
-  execution: execution === 'ui' ? 'ui' : 'powershell',
+  execution: 'powershell',
   inputs: [],
   outputs: [],
   constants: [
@@ -532,11 +321,6 @@ export const createEmptySpec = (execution = 'powershell') => ({
     '# {{config.key}} for constant fields, and {{output.Result}} for outputs.',
     '# Remove these lines and write your PowerShell snippet here.',
   ].join('\n'),
-  ui: {
-    markup: DEFAULT_UI_MARKUP,
-    script: DEFAULT_UI_SCRIPT,
-    style: DEFAULT_UI_STYLE,
-  },
 });
 
 export const listCustomNodeSpecs = async ({ serverUrl } = {}) => {
@@ -662,10 +446,6 @@ export const specsToDefinitions = (specs) =>
         specId: normalized.id,
         sourceSpec: normalized,
       };
-
-      if (normalized.execution === 'ui') {
-        definition.render = createUiRenderer(normalized);
-      }
 
       if (Object.keys(initialConfig).length) {
         definition.initialConfig = initialConfig;
