@@ -1,4 +1,5 @@
 import { wrapPowerShellScript } from './psTemplate.js';
+import { toPowerShellLiteral } from './guiUtils.js';
 
 const HANDLE_RADIUS = 6;
 const PALETTE_STORAGE_KEY = 'nodeflow.palette.v1';
@@ -11,9 +12,18 @@ class Node {
     this.type = definition.id;
     this.definition = definition;
     this.position = position;
-    this.config = Object.fromEntries(
+    const initialConfig =
+      definition && typeof definition.initialConfig === 'object'
+        ? { ...definition.initialConfig }
+        : {};
+    const controlDefaults = Object.fromEntries(
       (definition.controls || []).map((control) => [control.key, control.default ?? ''])
     );
+    this.config = {
+      ...initialConfig,
+      ...controlDefaults,
+    };
+    this.teardown = null;
   }
 
   serialize() {
@@ -313,19 +323,23 @@ export class NodeEditor {
         return;
       }
       node.definition = def;
-      const defaults = Object.fromEntries(
-        (def.controls || []).map((control) => [control.key, control.default ?? ''])
-      );
+      const defaults = {
+        ...(def.initialConfig && typeof def.initialConfig === 'object' ? def.initialConfig : {}),
+        ...Object.fromEntries((def.controls || []).map((control) => [control.key, control.default ?? ''])),
+      };
       node.config = {
         ...defaults,
         ...node.config,
       };
       Object.keys(node.config).forEach((key) => {
-        if (!(def.controls || []).some((control) => control.key === key)) {
-          if (!Object.prototype.hasOwnProperty.call(defaults, key)) {
-            delete node.config[key];
-          }
+        if (Object.prototype.hasOwnProperty.call(defaults, key)) {
+          return;
         }
+        const controlHasKey = (def.controls || []).some((control) => control.key === key);
+        if (controlHasKey) {
+          return;
+        }
+        delete node.config[key];
       });
     });
 
@@ -1483,15 +1497,49 @@ export class NodeEditor {
   }
 
   _renderNode(node) {
+    if (typeof node.teardown === 'function') {
+      try {
+        node.teardown();
+      } catch (error) {
+        console.warn('Failed to cleanup node UI', error);
+      }
+    }
+    node.teardown = null;
+
     const fragment = this.nodeTemplate.content.cloneNode(true);
     const el = fragment.querySelector('.node');
     el.dataset.id = node.id;
     el.style.transform = `translate(${node.position.x}px, ${node.position.y}px)`;
     el.querySelector('.node-label').textContent = node.definition.label;
+    el.classList.toggle('node-ui', node.definition.execution === 'ui');
+    el.classList.toggle('node-powershell', node.definition.execution !== 'ui');
 
     const controlsContainer = el.querySelector('.node-controls');
     if (controlsContainer) {
       this._renderNodeControls(node, controlsContainer);
+    }
+
+    if (typeof node.definition.render === 'function') {
+      const teardown = node.definition.render({
+        node,
+        element: el,
+        controls: controlsContainer,
+        editor: this,
+        updateConfig: (key, value, options = {}) =>
+          this._updateNodeConfigValue(node.id, key, value, options),
+        resolveInput: (inputName, options = {}) =>
+          this.resolveInputValue(node.id, inputName, options),
+        toPowerShellLiteral,
+      });
+      if (typeof teardown === 'function') {
+        node.teardown = () => {
+          try {
+            teardown();
+          } catch (error) {
+            console.warn('Failed to dispose node UI', error);
+          }
+        };
+      }
     }
 
     const deleteBtn = el.querySelector('.node-delete');
@@ -1939,15 +1987,134 @@ export class NodeEditor {
     return parts[parts.length - 1];
   }
 
-  _updateNodeConfigValue(nodeId, key, value, { silent = false } = {}) {
+  _updateNodeConfigValue(nodeId, key, value, { silent = false, displayValue } = {}) {
     const node = this.nodes.get(nodeId);
     if (!node) return;
     const next = value ?? '';
-    if (node.config[key] === next) return;
+    const previous = node.config[key];
+    const changed = previous !== next;
+    if (!changed && displayValue === undefined) {
+      return;
+    }
     node.config[key] = next;
-    if (!silent) {
+    this._syncControlDisplay(nodeId, key, displayValue !== undefined ? displayValue : next);
+    if (!silent && changed) {
       this._markDirty();
     }
+    this._handleConfigMutation(node, key, next);
+  }
+
+  _syncControlDisplay(nodeId, key, displayValue) {
+    const nodeEl = this.nodeLayer.querySelector(`.node[data-id='${nodeId}']`);
+    if (!nodeEl) return;
+    const elements = nodeEl.querySelectorAll(`[data-control-key='${key}']`);
+    if (!elements.length) return;
+    const value = displayValue !== undefined ? displayValue : this.nodes.get(nodeId)?.config[key] ?? '';
+    elements.forEach((element) => {
+      const kind = element.dataset.controlKind || '';
+      if (kind === 'CheckBox') {
+        element.checked = this._toBoolean(value);
+      } else if (kind === 'RadioButton') {
+        element.checked = element.value === value;
+      } else if (kind === 'SelectBox') {
+        const options = Array.from(element.options || []);
+        if (options.some((option) => option.value === value)) {
+          element.value = value;
+        }
+      } else {
+        element.value = value ?? '';
+      }
+    });
+  }
+
+  _extractLiteralRaw(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+    const isSingle = text.startsWith("'") && text.endsWith("'");
+    const isDouble = text.startsWith('"') && text.endsWith('"');
+    if (!isSingle && !isDouble) {
+      return text;
+    }
+    const inner = text.slice(1, -1);
+    if (isSingle) {
+      return inner.replace(/''/g, "'");
+    }
+    return inner;
+  }
+
+  _handleConfigMutation(node, key, value) {
+    if (!node || node.definition.execution !== 'ui') {
+      return;
+    }
+    const outputs = node.definition.outputs || [];
+    if (!outputs.length) {
+      return;
+    }
+    if (key.endsWith('__raw')) {
+      const base = key.slice(0, -5);
+      if (outputs.includes(base)) {
+        this._propagateUiOutput(node.id, base, { rawValue: value });
+      }
+      return;
+    }
+    if (outputs.includes(key)) {
+      this._propagateUiOutput(node.id, key, { value });
+    }
+  }
+
+  _propagateUiOutput(sourceNodeId, outputName, { value, rawValue } = {}) {
+    const targets = this.connections.filter(
+      (connection) => connection.fromNode === sourceNodeId && connection.fromPort === outputName
+    );
+    if (!targets.length) {
+      return;
+    }
+    targets.forEach((connection) => {
+      const targetNode = this.nodes.get(connection.toNode);
+      if (!targetNode) return;
+      const inputName = connection.toPort;
+      const controls = targetNode.definition.controls || [];
+      const control = controls.find((item) => item.bindsToInput === inputName);
+      if (!control) return;
+      const raw = rawValue !== undefined ? rawValue : this._extractLiteralRaw(value);
+      const literal = raw !== undefined && raw !== null ? toPowerShellLiteral(raw) : '';
+      this._updateNodeConfigValue(targetNode.id, `${control.key}__raw`, raw, { silent: true });
+      this._updateNodeConfigValue(targetNode.id, control.key, literal, {
+        silent: false,
+        displayValue: raw,
+      });
+    });
+  }
+
+  resolveInputValue(nodeId, inputName, { preferRaw = false } = {}) {
+    const node = this.nodes.get(nodeId);
+    if (!node) return '';
+    const connection = this.connections.find(
+      (c) => c.toNode === nodeId && c.toPort === inputName
+    );
+    const rawKey = `${inputName}__raw`;
+    if (!connection) {
+      if (preferRaw && Object.prototype.hasOwnProperty.call(node.config, rawKey)) {
+        return node.config[rawKey];
+      }
+      return node.config[inputName] ?? '';
+    }
+    const sourceNode = this.nodes.get(connection.fromNode);
+    if (!sourceNode) {
+      return '';
+    }
+    if (sourceNode.definition.execution === 'ui') {
+      const sourceRawKey = `${connection.fromPort}__raw`;
+      if (preferRaw && Object.prototype.hasOwnProperty.call(sourceNode.config, sourceRawKey)) {
+        return sourceNode.config[sourceRawKey];
+      }
+      const value = sourceNode.config[connection.fromPort];
+      if (value !== undefined) {
+        return value;
+      }
+      return preferRaw ? sourceNode.config[sourceRawKey] ?? '' : '';
+    }
+    return '';
   }
 
   async _requestReferenceFile({ mode = 'file', defaultPath } = {}) {
@@ -2086,6 +2253,8 @@ export class NodeEditor {
       input.name = control.key;
       input.id = inputId;
       input.value = currentValue || '';
+      input.dataset.controlKey = control.key;
+      input.dataset.controlKind = control.controlKind || 'Reference';
       if (control.placeholder) input.placeholder = control.placeholder;
       input.autocomplete = 'off';
 
@@ -2254,6 +2423,8 @@ export class NodeEditor {
       input.id = inputId;
       input.value = 'True';
       input.checked = this._toBoolean(currentValue);
+      input.dataset.controlKey = control.key;
+      input.dataset.controlKind = 'CheckBox';
       const stateLabel = document.createElement('span');
       stateLabel.className = 'node-toggle-state';
       stateLabel.textContent = input.checked ? 'True' : 'False';
@@ -2289,6 +2460,8 @@ export class NodeEditor {
         radio.id = optionId;
         radio.value = option;
         radio.checked = this._toBoolean(currentValue) === (option === 'True');
+        radio.dataset.controlKey = control.key;
+        radio.dataset.controlKind = 'RadioButton';
         radio.addEventListener('change', (event) => {
           if (event.target.checked) {
             this._updateNodeConfigValue(node.id, control.key, option);
@@ -2339,6 +2512,8 @@ export class NodeEditor {
         select.className = 'node-control-select-input';
         select.name = control.key;
         select.id = inputId;
+        select.dataset.controlKey = control.key;
+        select.dataset.controlKind = 'SelectBox';
         options.forEach((option) => {
           const opt = document.createElement('option');
           opt.value = option.value;
@@ -2375,11 +2550,41 @@ export class NodeEditor {
     input.className = 'node-control-input';
     input.name = control.key;
     input.id = inputId;
-    input.value = currentValue || '';
+    const bindsToInput = !!control.bindsToInput;
+    const rawKey = `${control.key}__raw`;
+    let displayValue = currentValue || '';
+    if (bindsToInput) {
+      const storedRaw = node.config[rawKey];
+      if (storedRaw !== undefined) {
+        displayValue = storedRaw || '';
+      } else if (currentValue) {
+        const derivedRaw = this._extractLiteralRaw(currentValue);
+        displayValue = derivedRaw;
+        this._updateNodeConfigValue(node.id, rawKey, derivedRaw, { silent: true });
+      } else {
+        displayValue = '';
+      }
+    }
+    input.value = displayValue;
     if (control.placeholder) input.placeholder = control.placeholder;
     input.autocomplete = 'off';
+    input.dataset.controlKey = control.key;
+    input.dataset.controlKind = control.controlKind || 'TextBox';
+    if (bindsToInput) {
+      input.dataset.bindsToInput = control.bindsToInput;
+    }
     input.addEventListener('input', (event) => {
-      this._updateNodeConfigValue(node.id, control.key, event.target.value);
+      const textValue = event.target.value;
+      if (bindsToInput) {
+        this._updateNodeConfigValue(node.id, rawKey, textValue, { silent: true });
+        const literalValue = textValue ? toPowerShellLiteral(textValue) : '';
+        this._updateNodeConfigValue(node.id, control.key, literalValue, {
+          silent: false,
+          displayValue: textValue,
+        });
+      } else {
+        this._updateNodeConfigValue(node.id, control.key, textValue);
+      }
     });
     this._preventNodeDrag(field);
     this._preventNodeDrag(input);
@@ -2458,11 +2663,29 @@ export class NodeEditor {
       return outputNames.get(key);
     };
 
+    const getUiOutputForScript = (nodeId, outputName) => {
+      const node = this.nodes.get(nodeId);
+      if (!node) return '';
+      const rawKey = `${outputName}__raw`;
+      const stored = node.config[outputName];
+      if (stored) {
+        return stored;
+      }
+      if (Object.prototype.hasOwnProperty.call(node.config, rawKey)) {
+        return toPowerShellLiteral(node.config[rawKey]);
+      }
+      return '';
+    };
+
     const getInputVar = (nodeId, inputName) => {
       const connection = this.connections.find(
         (c) => c.toNode === nodeId && c.toPort === inputName
       );
       if (connection) {
+        const sourceNode = this.nodes.get(connection.fromNode);
+        if (sourceNode?.definition?.execution === 'ui') {
+          return getUiOutputForScript(connection.fromNode, connection.fromPort);
+        }
         return getOutputVar(connection.fromNode, connection.fromPort);
       }
       const node = this.nodes.get(nodeId);
@@ -2480,6 +2703,9 @@ export class NodeEditor {
       if (!node) return;
       const def = nodeDefs[node.type];
       if (!def) return;
+      if (def.execution === 'ui') {
+        return;
+      }
       const inputs = {};
       const outputs = {};
       (def.inputs || []).forEach((inputName) => {
@@ -2579,6 +2805,15 @@ export class NodeEditor {
   }
 
   clearGraph(clearStorage = true) {
+    this.nodes.forEach((node) => {
+      if (typeof node.teardown === 'function') {
+        try {
+          node.teardown();
+        } catch (error) {
+          console.warn('Failed to cleanup node UI', error);
+        }
+      }
+    });
     this.nodes.clear();
     this.connections = [];
     this.nodeLayer.innerHTML = '';
@@ -2692,6 +2927,13 @@ export class NodeEditor {
   _removeNode(nodeId, { markDirty = true } = {}) {
     const node = this.nodes.get(nodeId);
     if (!node) return;
+    if (typeof node.teardown === 'function') {
+      try {
+        node.teardown();
+      } catch (error) {
+        console.warn('Failed to cleanup node UI', error);
+      }
+    }
     this.nodes.delete(nodeId);
     const el = this.nodeLayer.querySelector(`.node[data-id="${nodeId}"]`);
     if (el) {

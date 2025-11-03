@@ -611,6 +611,15 @@ body.theme-dark button.secondary:focus-visible {
   gap: 0.75rem;
 }
 
+.node.node-ui {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.12), transparent 65%), var(--node-bg);
+}
+
+.node.node-ui .node-header {
+  color: #2563eb;
+}
+
 .node.selected {
   border-color: var(--accent);
   box-shadow: 0 12px 32px -18px rgba(77, 124, 255, 0.85), 0 0 0 2px rgba(77, 124, 255, 0.25);
@@ -1122,6 +1131,12 @@ body.designer-open .app-body {
   font-weight: 600;
 }
 
+.field-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: -0.25rem 0 0;
+}
+
 .field-group input,
 .field-group textarea {
   width: 100%;
@@ -1156,6 +1171,94 @@ body.designer-open .app-body {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.excel-ui-node {
+  display: grid;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+}
+
+.excel-ui-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.excel-ui-select {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  background: var(--panel-subtle);
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.excel-ui-button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  background: rgba(37, 99, 235, 0.18);
+  color: #1d4ed8;
+}
+
+.excel-ui-button.primary {
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  color: #ffffff;
+}
+
+.excel-ui-button:hover:not(:disabled),
+.excel-ui-button:focus-visible:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.28);
+}
+
+.excel-ui-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.excel-ui-status {
+  min-height: 1.1em;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.excel-ui-status[data-state='success'] {
+  color: #1f9d72;
+}
+
+.excel-ui-status[data-state='error'] {
+  color: #dc2626;
+}
+
+.excel-ui-status[data-state='pending'] {
+  color: #2563eb;
+}
+
+.excel-selection-result {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.excel-selection-result dt {
+  margin: 0;
+  color: var(--muted);
+}
+
+.excel-selection-result dd {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
 }
 
 .designer-status {
