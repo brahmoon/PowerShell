@@ -1,13 +1,13 @@
 ﻿{
-    "id":  "log_message",
-    "label":  "text",
+    "id":  "show_message",
+    "label":  "Show Message",
     "category":  "Custom",
     "execution":  "powershell",
     "inputs":  [
-
+                   "text"
                ],
     "outputs":  [
-                    "LoggedMessage"
+
                 ],
     "constants":  [
                       {
@@ -18,6 +18,6 @@
                   ],
     "script":  "{{ config.text }}",
     "description":  "",
-    "createdAt":  "2025-11-03T14:22:57.322Z",
-    "updatedAt":  "2025-11-03T14:22:57.322Z"
+    "createdAt":  "2025-11-03T14:56:48.829Z",
+    "updatedAt":  "2025-11-03T14:56:48.829Z"
 }
