@@ -1,4 +1,11 @@
-const STORAGE_KEY = 'nodeflow.customNodes.v1';
+import { DEFAULT_SERVER_URL, normalizeServerUrl } from '../export/scriptRunner.js';
+
+const NODE_ENDPOINTS = {
+  list: '/nodes/list',
+  save: '/nodes/save',
+  delete: '/nodes/delete',
+};
+
 const DEFAULT_CONSTANT_PLACEHOLDER = '# TODO: set value';
 const CONTROL_TYPES = new Map(
   [
@@ -26,12 +33,23 @@ const normalizeBooleanConstant = (value) =>
   /^(true|1|yes|on)$/i.test(String(value ?? '').trim()) ? 'True' : 'False';
 
 const PLACEHOLDER_PATTERN = /\{\{\s*(input|output|config)\.([A-Za-z0-9_]+)\s*\}\}/g;
+const CONFIG_INPUT_ASSIGN_PATTERN =
+  /\{\{\s*config\.([A-Za-z0-9_]+)\s*\}\}\s*=\s*\{\{\s*input\.([A-Za-z0-9_]+)\s*\}\}/g;
 
 const sanitizeId = (value) =>
   String(value ?? '')
     .trim()
     .replace(/\s+/g, '_')
     .replace(/[^A-Za-z0-9_]/g, '_');
+
+const toBindingKey = (value) => sanitizeId(value).toLowerCase();
+
+const normalizeExecutionMode = (value) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase() === 'ui'
+    ? 'ui'
+    : 'powershell';
 
 const normalizeList = (value) => {
   if (Array.isArray(value)) {
@@ -135,6 +153,7 @@ const normalizeSpec = (spec, previous = null) => {
     id: baseId || (label ? sanitizeId(label) : ''),
     label: label || 'Untitled node',
     category: category || 'Custom',
+    execution: normalizeExecutionMode(spec?.execution),
     inputs: normalizeList(spec?.inputs),
     outputs: normalizeList(spec?.outputs),
     constants: normalizeConstants(spec?.constants),
@@ -149,28 +168,60 @@ const normalizeSpec = (spec, previous = null) => {
   return normalized;
 };
 
-const readSpecs = () => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((spec) => normalizeSpec(spec, spec))
-      .filter((spec, index, self) => spec.id && self.findIndex((item) => item.id === spec.id) === index)
-      .sort((a, b) => (a.label || '').localeCompare(b.label || ''));
-  } catch (error) {
-    console.error('Failed to read custom node specs', error);
-    return [];
+const deriveConfigInputBindings = (spec) => {
+  const script = typeof spec?.script === 'string' ? spec.script : '';
+  if (!script.trim()) {
+    return new Map();
   }
+  const bindings = new Map();
+  const normalizedScript = script.replace(/\r\n/g, '\n');
+  CONFIG_INPUT_ASSIGN_PATTERN.lastIndex = 0;
+  let match;
+  // Capture direct assignments of config placeholders from input placeholders so that
+  // downstream TextBox controls can mirror connected input values inside the editor UI.
+  while ((match = CONFIG_INPUT_ASSIGN_PATTERN.exec(normalizedScript))) {
+    const configKey = toBindingKey(match[1]);
+    const inputKey = toBindingKey(match[2]);
+    if (!configKey || !inputKey || bindings.has(configKey)) {
+      continue;
+    }
+    bindings.set(configKey, inputKey);
+  }
+  return bindings;
 };
 
-const writeSpecs = (specs) => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(specs));
-  } catch (error) {
-    alert('Failed to store custom node: ' + error.message);
+const ensureServerUrl = (value) => normalizeServerUrl(value) || DEFAULT_SERVER_URL;
+
+const requestNodeServer = async (path, { method = 'GET', body, serverUrl } = {}) => {
+  const base = ensureServerUrl(serverUrl);
+  const url = `${base}${path}`;
+  const init = { method: method || 'GET' };
+  if (body !== undefined) {
+    init.headers = { 'Content-Type': 'application/json; charset=utf-8' };
+    init.body = JSON.stringify(body);
   }
+  let response;
+  try {
+    response = await fetch(url, init);
+  } catch (error) {
+    throw new Error(`PowerShell サーバーへの接続に失敗しました: ${error.message}`);
+  }
+
+  let data = null;
+  const text = await response.text();
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch (error) {
+      throw new Error('サーバーから無効なレスポンスを受信しました。');
+    }
+  }
+
+  if (!response.ok) {
+    const message = data?.error || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return data;
 };
 
 const createScriptFunction = (template) => {
@@ -190,6 +241,7 @@ export const SAMPLE_NODE_TEMPLATES = [
     id: 'sample_log_message',
     label: 'Sample: Log Message',
     category: 'Samples',
+    execution: 'powershell',
     description:
       'Demonstrates how to emit a message using a constant input and return the same value as an output.',
     inputs: [],
@@ -207,6 +259,7 @@ export const SAMPLE_NODE_TEMPLATES = [
     id: 'sample_math_add',
     label: 'Sample: Sum Inputs',
     category: 'Samples',
+    execution: 'powershell',
     description: 'Shows how to combine two incoming values and expose a calculated result.',
     inputs: ['FirstValue', 'SecondValue'],
     outputs: ['Total'],
@@ -233,6 +286,7 @@ export const SAMPLE_NODE_TEMPLATES = [
     id: 'sample_invoke_command',
     label: 'Sample: Invoke ScriptBlock',
     category: 'Samples',
+    execution: 'powershell',
     description:
       'Executes a custom script block with parameters taken from inputs and constants, then exposes the result.',
     inputs: ['ScriptInput'],
@@ -256,6 +310,7 @@ export const createEmptySpec = () => ({
   id: '',
   label: '',
   category: 'Custom',
+  execution: 'powershell',
   inputs: [],
   outputs: [],
   constants: [
@@ -268,37 +323,68 @@ export const createEmptySpec = () => ({
   ].join('\n'),
 });
 
-export const listCustomNodeSpecs = () => readSpecs();
+export const listCustomNodeSpecs = async ({ serverUrl } = {}) => {
+  const data = await requestNodeServer(NODE_ENDPOINTS.list, { method: 'GET', serverUrl });
+  const specs = Array.isArray(data?.nodes) ? data.nodes : [];
+  return specs
+    .map((spec) => normalizeSpec(spec, spec))
+    .filter((spec, index, self) => spec.id && self.findIndex((item) => item.id === spec.id) === index)
+    .sort((a, b) => (a.label || '').localeCompare(b.label || ''));
+};
 
-export const saveCustomNodeSpec = (spec) => {
-  const specs = readSpecs();
-  const previous = specs.find((item) => item.id === spec?.id);
-  const normalized = normalizeSpec(spec, previous);
-  normalized.updatedAt = new Date().toISOString();
-  if (previous) {
-    const index = specs.findIndex((item) => item.id === previous.id);
-    specs[index] = { ...normalized, createdAt: previous.createdAt };
-  } else {
-    specs.push(normalized);
+export const saveCustomNodeSpec = async (spec, { serverUrl, previous } = {}) => {
+  if (!spec || typeof spec !== 'object') {
+    throw new Error('保存するノードの情報が無効です。');
   }
-  writeSpecs(specs);
+  const normalized = normalizeSpec(spec, previous || spec);
+  normalized.updatedAt = new Date().toISOString();
+  const data = await requestNodeServer(NODE_ENDPOINTS.save, {
+    method: 'POST',
+    serverUrl,
+    body: { spec: normalized },
+  });
+  if (data?.spec) {
+    return normalizeSpec(data.spec, normalized);
+  }
   return normalized;
 };
 
-export const deleteCustomNodeSpec = (id) => {
-  const specs = readSpecs().filter((item) => item.id !== id);
-  writeSpecs(specs);
-  return specs;
+export const deleteCustomNodeSpec = async (id, { serverUrl } = {}) => {
+  if (!id) {
+    return [];
+  }
+  const data = await requestNodeServer(NODE_ENDPOINTS.delete, {
+    method: 'POST',
+    serverUrl,
+    body: { id },
+  });
+  const specs = Array.isArray(data?.nodes) ? data.nodes : [];
+  return specs
+    .map((spec) => normalizeSpec(spec, spec))
+    .filter((spec, index, self) => spec.id && self.findIndex((item) => item.id === spec.id) === index)
+    .sort((a, b) => (a.label || '').localeCompare(b.label || ''));
 };
 
 export const specsToDefinitions = (specs) =>
   (specs || [])
     .map((spec) => {
       const normalized = normalizeSpec(spec, spec);
-      return {
+      const sanitizedInputMap = new Map();
+      normalized.inputs.forEach((input) => {
+        const bindingKey = toBindingKey(input);
+        if (!bindingKey || sanitizedInputMap.has(bindingKey)) {
+          return;
+        }
+        sanitizedInputMap.set(bindingKey, input);
+      });
+      const derivedBindings = deriveConfigInputBindings(normalized);
+      const initialConfig = {};
+
+      const definition = {
         id: normalized.id,
         label: normalized.label,
         category: normalized.category || 'Custom',
+        execution: normalized.execution,
         inputs: normalized.inputs,
         outputs: normalized.outputs,
         controls: normalized.constants.map((constant) => {
@@ -313,7 +399,7 @@ export const specsToDefinitions = (specs) =>
                     ].map((option) => String(option ?? '').trim())
                   )
                 ).filter(Boolean)
-              : [];
+                : [];
           let defaultValue;
           if (controlKind === 'CheckBox' || controlKind === 'RadioButton') {
             defaultValue = normalizeBooleanConstant(constant.value);
@@ -322,6 +408,21 @@ export const specsToDefinitions = (specs) =>
             defaultValue = optionValues.includes(preferred) ? preferred : optionValues[0] || '';
           } else {
             defaultValue = constant.value;
+          }
+          let boundInputName;
+          if (controlKind === 'TextBox') {
+            const constantBindingKey = toBindingKey(constant.key);
+            if (sanitizedInputMap.has(constantBindingKey)) {
+              boundInputName = sanitizedInputMap.get(constantBindingKey);
+            } else {
+              const derived = derivedBindings.get(constantBindingKey);
+              if (derived) {
+                boundInputName = sanitizedInputMap.get(derived) || derived;
+              }
+            }
+          }
+          if (boundInputName) {
+            initialConfig[`${constant.key}__raw`] = '';
           }
           return {
             key: constant.key,
@@ -338,12 +439,19 @@ export const specsToDefinitions = (specs) =>
               controlKind === 'SelectBox'
                 ? optionValues.map((value) => ({ value, label: value }))
                 : undefined,
+            bindsToInput: boundInputName,
           };
         }),
         script: createScriptFunction(normalized.script),
         specId: normalized.id,
         sourceSpec: normalized,
       };
+
+      if (Object.keys(initialConfig).length) {
+        definition.initialConfig = initialConfig;
+      }
+
+      return definition;
     })
     .filter((definition, index, self) =>
       definition.id && self.findIndex((item) => item.id === definition.id) === index

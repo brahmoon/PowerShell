@@ -194,6 +194,85 @@ function Get-JsonBody {
     }
 }
 
+function Get-NodesDirectory {
+    if (-not $script:NodesDirectory) {
+        $script:NodesDirectory = Join-Path $script:ContentRoot 'nodes'
+    }
+    return $script:NodesDirectory
+}
+
+function Ensure-NodesDirectory {
+    $dir = Get-NodesDirectory
+    if (-not (Test-Path $dir)) {
+        $null = New-Item -ItemType Directory -Path $dir -Force
+    }
+    return $dir
+}
+
+function Sanitize-NodeId {
+    param(
+        [Parameter(Mandatory)][string]$Id
+    )
+    $trimmed = $Id.Trim()
+    if (-not $trimmed) { return '' }
+    $normalized = $trimmed -replace '\s+', '_' -replace '[^A-Za-z0-9_]', '_'
+    return $normalized
+}
+
+function Read-CustomNodeSpecs {
+    $dir = Ensure-NodesDirectory
+    $files = @(Get-ChildItem -Path $dir -Filter '*.json' -ErrorAction SilentlyContinue)
+    $nodes = @()
+    foreach ($file in $files) {
+        try {
+            $raw = Get-Content -Path $file.FullName -Raw -Encoding UTF8
+            if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+            $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+            if ($parsed) {
+                $nodes += $parsed
+            }
+        } catch {
+            Write-Warning "Failed to read custom node from $($file.FullName): $($_.Exception.Message)"
+        }
+    }
+    return $nodes
+}
+
+function Write-CustomNodeSpec {
+    param(
+        [Parameter(Mandatory)][psobject]$Spec
+    )
+
+    $rawId = [string]$Spec.id
+    $sanitizedId = Sanitize-NodeId -Id $rawId
+    if (-not $sanitizedId) {
+        throw "Spec id is required."
+    }
+    $Spec.id = $sanitizedId
+    $dir = Ensure-NodesDirectory
+    $path = Join-Path $dir "$sanitizedId.json"
+    try {
+        $json = $Spec | ConvertTo-Json -Depth 8
+        [System.IO.File]::WriteAllText($path, $json, [System.Text.Encoding]::UTF8)
+    } catch {
+        throw "Failed to write custom node: $($_.Exception.Message)"
+    }
+    return $Spec
+}
+
+function Remove-CustomNodeSpec {
+    param(
+        [Parameter(Mandatory)][string]$Id
+    )
+    $sanitizedId = Sanitize-NodeId -Id $Id
+    if (-not $sanitizedId) { return }
+    $dir = Ensure-NodesDirectory
+    $path = Join-Path $dir "$sanitizedId.json"
+    if (Test-Path $path) {
+        Remove-Item -Path $path -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-PowerShellScript {
     param(
         [Parameter(Mandatory)][string]$Script
@@ -254,6 +333,61 @@ function Handle-Request {
                 message = 'psBrowserPilot server online'
             }
             Send-Json -Context $Context -Data $data
+        }
+        '/nodes/list' {
+            try {
+                $nodes = Read-CustomNodeSpecs
+                Send-Json -Context $Context -Data @{ ok = $true; nodes = $nodes }
+            } catch {
+                Send-Json -Context $Context -Data @{ ok = $false; error = $_.Exception.Message } -StatusCode 500
+            }
+        }
+        '/nodes/save' {
+            if ($request.HttpMethod -ne 'POST') {
+                Send-Json -Context $Context -Data @{ ok = $false; error = 'Use POST with JSON body {"spec": {...}}' } -StatusCode 405
+                break
+            }
+            try {
+                $payload = Get-JsonBody -Context $Context
+            } catch {
+                Send-Json -Context $Context -Data @{ ok = $false; error = $_ } -StatusCode 400
+                break
+            }
+            if (-not $payload -or -not $payload.PSObject.Properties['spec']) {
+                Send-Json -Context $Context -Data @{ ok = $false; error = 'Missing "spec" in request body.' } -StatusCode 400
+                break
+            }
+            try {
+                $saved = Write-CustomNodeSpec($payload.spec)
+                $nodes = Read-CustomNodeSpecs
+                Send-Json -Context $Context -Data @{ ok = $true; spec = $saved; nodes = $nodes }
+            } catch {
+                Send-Json -Context $Context -Data @{ ok = $false; error = $_.Exception.Message } -StatusCode 500
+            }
+        }
+        '/nodes/delete' {
+            if ($request.HttpMethod -ne 'POST') {
+                Send-Json -Context $Context -Data @{ ok = $false; error = 'Use POST with JSON body {"id": "..."}' } -StatusCode 405
+                break
+            }
+            try {
+                $payload = Get-JsonBody -Context $Context
+            } catch {
+                Send-Json -Context $Context -Data @{ ok = $false; error = $_ } -StatusCode 400
+                break
+            }
+            $rawId = [string]$payload.id
+            if ([string]::IsNullOrWhiteSpace($rawId)) {
+                Send-Json -Context $Context -Data @{ ok = $false; error = 'Missing "id" in request body.' } -StatusCode 400
+                break
+            }
+            try {
+                Remove-CustomNodeSpec -Id $rawId
+                $nodes = Read-CustomNodeSpecs
+                Send-Json -Context $Context -Data @{ ok = $true; nodes = $nodes }
+            } catch {
+                Send-Json -Context $Context -Data @{ ok = $false; error = $_.Exception.Message } -StatusCode 500
+            }
         }
         '/runscript' {
             if ($request.HttpMethod -ne 'POST') {

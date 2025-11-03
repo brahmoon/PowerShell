@@ -1,4 +1,5 @@
 import { wrapPowerShellScript } from './psTemplate.js';
+import { toPowerShellLiteral } from './guiUtils.js';
 
 const HANDLE_RADIUS = 6;
 const PALETTE_STORAGE_KEY = 'nodeflow.palette.v1';
@@ -11,9 +12,18 @@ class Node {
     this.type = definition.id;
     this.definition = definition;
     this.position = position;
-    this.config = Object.fromEntries(
+    const initialConfig =
+      definition && typeof definition.initialConfig === 'object'
+        ? { ...definition.initialConfig }
+        : {};
+    const controlDefaults = Object.fromEntries(
       (definition.controls || []).map((control) => [control.key, control.default ?? ''])
     );
+    this.config = {
+      ...initialConfig,
+      ...controlDefaults,
+    };
+    this.teardown = null;
   }
 
   serialize() {
@@ -75,6 +85,13 @@ export class NodeEditor {
     this.draggingGroup = null;
     this.dragMoved = false;
     this.dragStartClient = null;
+    this.dragStartWorld = null;
+    this.panState = null;
+    this._panMoveHandler = null;
+    this._panUpHandler = null;
+    this.viewport = { scale: 1, offsetX: 0, offsetY: 0 };
+    this.minScale = 0.25;
+    this.maxScale = 3;
     this.paletteState = this._loadPaletteState(library || []);
     this.paletteDragState = null;
     this.paletteDropIndicator = null;
@@ -91,6 +108,7 @@ export class NodeEditor {
     this._bindKeyboardEvents();
     this.setLibrary(library || [], { persist: false });
     this.resize();
+    this._applyViewport();
   }
 
   _makePaletteId(prefix) {
@@ -114,6 +132,98 @@ export class NodeEditor {
       type: 'node',
       nodeId: definitionId,
     };
+  }
+
+  _clampScale(value) {
+    if (!Number.isFinite(value)) {
+      return this.viewport.scale;
+    }
+    return Math.max(this.minScale, Math.min(this.maxScale, value));
+  }
+
+  _getCanvasRect() {
+    return this.nodeLayer.getBoundingClientRect();
+  }
+
+  _clientToScreen(clientX, clientY) {
+    const rect = this._getCanvasRect();
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    };
+  }
+
+  _screenToWorld(point = {}) {
+    const { scale, offsetX, offsetY } = this.viewport;
+    const x = typeof point.x === 'number' ? point.x : 0;
+    const y = typeof point.y === 'number' ? point.y : 0;
+    return {
+      x: (x - offsetX) / scale,
+      y: (y - offsetY) / scale,
+    };
+  }
+
+  _worldToScreen(point = {}) {
+    const { scale, offsetX, offsetY } = this.viewport;
+    const x = typeof point.x === 'number' ? point.x : 0;
+    const y = typeof point.y === 'number' ? point.y : 0;
+    return {
+      x: x * scale + offsetX,
+      y: y * scale + offsetY,
+    };
+  }
+
+  _positionNodeElement(element, position) {
+    if (!element || !position) return;
+    const { scale, offsetX, offsetY } = this.viewport;
+    const x = position.x * scale + offsetX;
+    const y = position.y * scale + offsetY;
+    element.style.transformOrigin = '0 0';
+    element.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }
+
+  _refreshNodePositions() {
+    this.nodeLayer.querySelectorAll('.node').forEach((el) => {
+      const node = this.nodes.get(el.dataset.id);
+      if (!node) return;
+      this._positionNodeElement(el, node.position);
+    });
+  }
+
+  _recalculateActiveConnectionAnchors() {
+    if (!this.activeConnection) return;
+    const connection = this.activeConnection;
+    if (connection.fromNode && connection.fromPort) {
+      const start = this._getPortPosition(connection.fromNode, connection.fromPort, 'output');
+      if (start) {
+        connection.start = start;
+        connection.startWorld = this._screenToWorld(start);
+      }
+    } else if (connection.startWorld) {
+      connection.start = this._worldToScreen(connection.startWorld);
+    }
+
+    if (connection.toNode && connection.toPort) {
+      const end = this._getPortPosition(connection.toNode, connection.toPort, 'input');
+      if (end) {
+        connection.current = end;
+        connection.currentWorld = this._screenToWorld(end);
+      }
+    } else if (connection.currentWorld) {
+      connection.current = this._worldToScreen(connection.currentWorld);
+    }
+  }
+
+  _applyViewport({ refreshActiveConnection = true } = {}) {
+    this._refreshNodePositions();
+    if (refreshActiveConnection) {
+      this._recalculateActiveConnectionAnchors();
+    }
+    if (this.selectionState) {
+      this._updateSelectionOverlay();
+      this._previewSelection();
+    }
+    this._drawConnections();
   }
 
   _createDefaultPaletteState(initialLibrary = []) {
@@ -313,19 +423,23 @@ export class NodeEditor {
         return;
       }
       node.definition = def;
-      const defaults = Object.fromEntries(
-        (def.controls || []).map((control) => [control.key, control.default ?? ''])
-      );
+      const defaults = {
+        ...(def.initialConfig && typeof def.initialConfig === 'object' ? def.initialConfig : {}),
+        ...Object.fromEntries((def.controls || []).map((control) => [control.key, control.default ?? ''])),
+      };
       node.config = {
         ...defaults,
         ...node.config,
       };
       Object.keys(node.config).forEach((key) => {
-        if (!(def.controls || []).some((control) => control.key === key)) {
-          if (!Object.prototype.hasOwnProperty.call(defaults, key)) {
-            delete node.config[key];
-          }
+        if (Object.prototype.hasOwnProperty.call(defaults, key)) {
+          return;
         }
+        const controlHasKey = (def.controls || []).some((control) => control.key === key);
+        if (controlHasKey) {
+          return;
+        }
+        delete node.config[key];
       });
     });
 
@@ -359,7 +473,7 @@ export class NodeEditor {
     }
 
     this._redrawNodes();
-    this._drawConnections();
+    this._applyViewport({ refreshActiveConnection: false });
     if (persist && changed) {
       this._markDirty();
     }
@@ -369,7 +483,7 @@ export class NodeEditor {
     const rect = this.nodeLayer.getBoundingClientRect();
     this.connectionLayer.width = rect.width;
     this.connectionLayer.height = rect.height;
-    this._drawConnections();
+    this._applyViewport();
   }
 
   _renderPalette() {
@@ -482,7 +596,8 @@ export class NodeEditor {
     button.dataset.type = 'node';
     button.draggable = true;
     button.addEventListener('click', () => {
-      const position = { x: 60, y: 60 + this.nodeCount * 40 };
+      const screen = { x: 60, y: 60 + this.nodeCount * 40 };
+      const position = this._screenToWorld(screen);
       this._createNode(definition, position);
     });
     button.addEventListener('dragstart', (event) => this._onPaletteDragStart(event, item));
@@ -1476,22 +1591,56 @@ export class NodeEditor {
     const node = new Node(definition, nodeId, position);
     this.nodes.set(nodeId, node);
     this._renderNode(node);
-    this._drawConnections();
+    this._applyViewport();
     this._selectNode(nodeId, { additive: false });
     this._markDirty();
     return node;
   }
 
   _renderNode(node) {
+    if (typeof node.teardown === 'function') {
+      try {
+        node.teardown();
+      } catch (error) {
+        console.warn('Failed to cleanup node UI', error);
+      }
+    }
+    node.teardown = null;
+
     const fragment = this.nodeTemplate.content.cloneNode(true);
     const el = fragment.querySelector('.node');
     el.dataset.id = node.id;
-    el.style.transform = `translate(${node.position.x}px, ${node.position.y}px)`;
+    this._positionNodeElement(el, node.position);
     el.querySelector('.node-label').textContent = node.definition.label;
+    el.classList.toggle('node-ui', node.definition.execution === 'ui');
+    el.classList.toggle('node-powershell', node.definition.execution !== 'ui');
 
     const controlsContainer = el.querySelector('.node-controls');
     if (controlsContainer) {
       this._renderNodeControls(node, controlsContainer);
+    }
+
+    if (typeof node.definition.render === 'function') {
+      const teardown = node.definition.render({
+        node,
+        element: el,
+        controls: controlsContainer,
+        editor: this,
+        updateConfig: (key, value, options = {}) =>
+          this._updateNodeConfigValue(node.id, key, value, options),
+        resolveInput: (inputName, options = {}) =>
+          this.resolveInputValue(node.id, inputName, options),
+        toPowerShellLiteral,
+      });
+      if (typeof teardown === 'function') {
+        node.teardown = () => {
+          try {
+            teardown();
+          } catch (error) {
+            console.warn('Failed to dispose node UI', error);
+          }
+        };
+      }
     }
 
     const deleteBtn = el.querySelector('.node-delete');
@@ -1602,9 +1751,10 @@ export class NodeEditor {
     this.draggedNode = node;
     const targetEl = event.currentTarget;
     const pointerId = event.pointerId;
-    const parentRect = this.nodeLayer.getBoundingClientRect();
-    this.dragOriginParentRect = parentRect;
     this.dragStartClient = { x: event.clientX, y: event.clientY };
+    this.dragStartWorld = this._screenToWorld(
+      this._clientToScreen(event.clientX, event.clientY)
+    );
     const ids = this.selectedNodes.size ? Array.from(this.selectedNodes) : [nodeId];
     this.draggingGroup = ids
       .map((id) => {
@@ -1651,20 +1801,17 @@ export class NodeEditor {
 
   _dragNode(event) {
     if (!this.draggingGroup || !this.draggingGroup.length) return;
-    const parentRect = this.dragOriginParentRect || this.nodeLayer.getBoundingClientRect();
-    const deltaX = event.clientX - this.dragStartClient.x;
-    const deltaY = event.clientY - this.dragStartClient.y;
+    const screenPoint = this._clientToScreen(event.clientX, event.clientY);
+    const worldPoint = this._screenToWorld(screenPoint);
+    const deltaX = worldPoint.x - this.dragStartWorld.x;
+    const deltaY = worldPoint.y - this.dragStartWorld.y;
     this.dragMoved = true;
     this.draggingGroup.forEach((item) => {
-      let x = item.start.x + deltaX;
-      let y = item.start.y + deltaY;
-      const maxX = Math.max(0, parentRect.width - item.width);
-      const maxY = Math.max(0, parentRect.height - item.height);
-      x = Math.max(0, Math.min(x, maxX));
-      y = Math.max(0, Math.min(y, maxY));
+      const x = item.start.x + deltaX;
+      const y = item.start.y + deltaY;
       item.node.position = { x, y };
       if (item.element) {
-        item.element.style.transform = `translate(${x}px, ${y}px)`;
+        this._positionNodeElement(item.element, item.node.position);
       }
     });
     this._drawConnections();
@@ -1676,9 +1823,96 @@ export class NodeEditor {
     }
     this.draggedNode = null;
     this.draggingGroup = null;
-    this.dragOriginParentRect = null;
     this.dragStartClient = null;
+    this.dragStartWorld = null;
     this.dragMoved = false;
+  }
+
+  _beginPan(event) {
+    if (!(event.button === 1 || event.button === 2)) {
+      return false;
+    }
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    this.panState = {
+      pointerId,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
+    };
+    if (this.nodeLayer.setPointerCapture) {
+      try {
+        this.nodeLayer.setPointerCapture(pointerId);
+      } catch (error) {
+        // ignore capture failures
+      }
+    }
+    this.nodeLayer.style.cursor = 'grabbing';
+    this._panMoveHandler = (ev) => this._pan(ev);
+    this._panUpHandler = (ev) => this._endPan(ev);
+    this.nodeLayer.addEventListener('pointermove', this._panMoveHandler);
+    window.addEventListener('pointerup', this._panUpHandler);
+    return true;
+  }
+
+  _pan(event) {
+    if (!this.panState) return;
+    if (this.panState.pointerId && event.pointerId && event.pointerId !== this.panState.pointerId) {
+      return;
+    }
+    const dx = event.clientX - this.panState.lastClientX;
+    const dy = event.clientY - this.panState.lastClientY;
+    if (!dx && !dy) {
+      return;
+    }
+    this.panState.lastClientX = event.clientX;
+    this.panState.lastClientY = event.clientY;
+    this.viewport.offsetX += dx;
+    this.viewport.offsetY += dy;
+    this._applyViewport();
+  }
+
+  _endPan(event) {
+    if (!this.panState) return;
+    if (this.panState.pointerId && event.pointerId && event.pointerId !== this.panState.pointerId) {
+      return;
+    }
+    if (this.nodeLayer.releasePointerCapture && this.panState.pointerId !== undefined) {
+      try {
+        this.nodeLayer.releasePointerCapture(this.panState.pointerId);
+      } catch (error) {
+        // ignore release failures
+      }
+    }
+    this.panState = null;
+    if (this._panMoveHandler) {
+      this.nodeLayer.removeEventListener('pointermove', this._panMoveHandler);
+      this._panMoveHandler = null;
+    }
+    if (this._panUpHandler) {
+      window.removeEventListener('pointerup', this._panUpHandler);
+      this._panUpHandler = null;
+    }
+    this.nodeLayer.style.cursor = '';
+  }
+
+  _handleZoom(event) {
+    if (event.ctrlKey) {
+      return;
+    }
+    event.preventDefault();
+    const multiplier = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const previousScale = this.viewport.scale;
+    const nextScale = this._clampScale(previousScale * multiplier);
+    if (nextScale === previousScale) {
+      return;
+    }
+    const screenPoint = this._clientToScreen(event.clientX, event.clientY);
+    const worldPoint = this._screenToWorld(screenPoint);
+    this.viewport.scale = nextScale;
+    const newScreen = this._worldToScreen(worldPoint);
+    this.viewport.offsetX += screenPoint.x - newScreen.x;
+    this.viewport.offsetY += screenPoint.y - newScreen.y;
+    this._applyViewport();
   }
 
   _beginConnection(event, nodeId, portName, portType) {
@@ -1701,6 +1935,8 @@ export class NodeEditor {
       toPort: portType === 'input' ? portName : null,
       start,
       current: start,
+      startWorld: this._screenToWorld(start),
+      currentWorld: this._screenToWorld(start),
     };
 
     const move = (ev) => this._trackConnection(ev);
@@ -1711,11 +1947,9 @@ export class NodeEditor {
 
   _trackConnection(event) {
     if (!this.activeConnection) return;
-    const rect = this.nodeLayer.getBoundingClientRect();
-    this.activeConnection.current = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
+    const point = this._clientToScreen(event.clientX, event.clientY);
+    this.activeConnection.current = point;
+    this.activeConnection.currentWorld = this._screenToWorld(point);
     this._drawConnections();
   }
 
@@ -1787,7 +2021,23 @@ export class NodeEditor {
     if (!exists) {
       this.connections.push({ fromNode, fromPort, toNode, toPort });
     }
-    this._drawConnections();
+    const sourceNode = this.nodes.get(fromNode);
+    if (sourceNode?.definition?.execution === 'ui') {
+      const outputs = Array.isArray(sourceNode.definition.outputs)
+        ? sourceNode.definition.outputs
+        : [];
+      if (outputs.includes(fromPort)) {
+        const rawKey = `${fromPort}__raw`;
+        const payload = {
+          value: sourceNode.config[fromPort],
+        };
+        if (Object.prototype.hasOwnProperty.call(sourceNode.config, rawKey)) {
+          payload.rawValue = sourceNode.config[rawKey];
+        }
+        this._propagateUiOutput(fromNode, fromPort, payload);
+      }
+    }
+    this._applyViewport();
     this._markDirty();
   }
 
@@ -1939,15 +2189,134 @@ export class NodeEditor {
     return parts[parts.length - 1];
   }
 
-  _updateNodeConfigValue(nodeId, key, value, { silent = false } = {}) {
+  _updateNodeConfigValue(nodeId, key, value, { silent = false, displayValue } = {}) {
     const node = this.nodes.get(nodeId);
     if (!node) return;
     const next = value ?? '';
-    if (node.config[key] === next) return;
+    const previous = node.config[key];
+    const changed = previous !== next;
+    if (!changed && displayValue === undefined) {
+      return;
+    }
     node.config[key] = next;
-    if (!silent) {
+    this._syncControlDisplay(nodeId, key, displayValue !== undefined ? displayValue : next);
+    if (!silent && changed) {
       this._markDirty();
     }
+    this._handleConfigMutation(node, key, next);
+  }
+
+  _syncControlDisplay(nodeId, key, displayValue) {
+    const nodeEl = this.nodeLayer.querySelector(`.node[data-id='${nodeId}']`);
+    if (!nodeEl) return;
+    const elements = nodeEl.querySelectorAll(`[data-control-key='${key}']`);
+    if (!elements.length) return;
+    const value = displayValue !== undefined ? displayValue : this.nodes.get(nodeId)?.config[key] ?? '';
+    elements.forEach((element) => {
+      const kind = element.dataset.controlKind || '';
+      if (kind === 'CheckBox') {
+        element.checked = this._toBoolean(value);
+      } else if (kind === 'RadioButton') {
+        element.checked = element.value === value;
+      } else if (kind === 'SelectBox') {
+        const options = Array.from(element.options || []);
+        if (options.some((option) => option.value === value)) {
+          element.value = value;
+        }
+      } else {
+        element.value = value ?? '';
+      }
+    });
+  }
+
+  _extractLiteralRaw(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+    const isSingle = text.startsWith("'") && text.endsWith("'");
+    const isDouble = text.startsWith('"') && text.endsWith('"');
+    if (!isSingle && !isDouble) {
+      return text;
+    }
+    const inner = text.slice(1, -1);
+    if (isSingle) {
+      return inner.replace(/''/g, "'");
+    }
+    return inner;
+  }
+
+  _handleConfigMutation(node, key, value) {
+    if (!node || node.definition.execution !== 'ui') {
+      return;
+    }
+    const outputs = node.definition.outputs || [];
+    if (!outputs.length) {
+      return;
+    }
+    if (key.endsWith('__raw')) {
+      const base = key.slice(0, -5);
+      if (outputs.includes(base)) {
+        this._propagateUiOutput(node.id, base, { rawValue: value });
+      }
+      return;
+    }
+    if (outputs.includes(key)) {
+      this._propagateUiOutput(node.id, key, { value });
+    }
+  }
+
+  _propagateUiOutput(sourceNodeId, outputName, { value, rawValue } = {}) {
+    const targets = this.connections.filter(
+      (connection) => connection.fromNode === sourceNodeId && connection.fromPort === outputName
+    );
+    if (!targets.length) {
+      return;
+    }
+    targets.forEach((connection) => {
+      const targetNode = this.nodes.get(connection.toNode);
+      if (!targetNode) return;
+      const inputName = connection.toPort;
+      const controls = targetNode.definition.controls || [];
+      const control = controls.find((item) => item.bindsToInput === inputName);
+      if (!control) return;
+      const raw = rawValue !== undefined ? rawValue : this._extractLiteralRaw(value);
+      const literal = raw !== undefined && raw !== null ? toPowerShellLiteral(raw) : '';
+      this._updateNodeConfigValue(targetNode.id, `${control.key}__raw`, raw, { silent: true });
+      this._updateNodeConfigValue(targetNode.id, control.key, literal, {
+        silent: false,
+        displayValue: raw,
+      });
+    });
+  }
+
+  resolveInputValue(nodeId, inputName, { preferRaw = false } = {}) {
+    const node = this.nodes.get(nodeId);
+    if (!node) return '';
+    const connection = this.connections.find(
+      (c) => c.toNode === nodeId && c.toPort === inputName
+    );
+    const rawKey = `${inputName}__raw`;
+    if (!connection) {
+      if (preferRaw && Object.prototype.hasOwnProperty.call(node.config, rawKey)) {
+        return node.config[rawKey];
+      }
+      return node.config[inputName] ?? '';
+    }
+    const sourceNode = this.nodes.get(connection.fromNode);
+    if (!sourceNode) {
+      return '';
+    }
+    if (sourceNode.definition.execution === 'ui') {
+      const sourceRawKey = `${connection.fromPort}__raw`;
+      if (preferRaw && Object.prototype.hasOwnProperty.call(sourceNode.config, sourceRawKey)) {
+        return sourceNode.config[sourceRawKey];
+      }
+      const value = sourceNode.config[connection.fromPort];
+      if (value !== undefined) {
+        return value;
+      }
+      return preferRaw ? sourceNode.config[sourceRawKey] ?? '' : '';
+    }
+    return '';
   }
 
   async _requestReferenceFile({ mode = 'file', defaultPath } = {}) {
@@ -2086,6 +2455,8 @@ export class NodeEditor {
       input.name = control.key;
       input.id = inputId;
       input.value = currentValue || '';
+      input.dataset.controlKey = control.key;
+      input.dataset.controlKind = control.controlKind || 'Reference';
       if (control.placeholder) input.placeholder = control.placeholder;
       input.autocomplete = 'off';
 
@@ -2254,6 +2625,8 @@ export class NodeEditor {
       input.id = inputId;
       input.value = 'True';
       input.checked = this._toBoolean(currentValue);
+      input.dataset.controlKey = control.key;
+      input.dataset.controlKind = 'CheckBox';
       const stateLabel = document.createElement('span');
       stateLabel.className = 'node-toggle-state';
       stateLabel.textContent = input.checked ? 'True' : 'False';
@@ -2289,6 +2662,8 @@ export class NodeEditor {
         radio.id = optionId;
         radio.value = option;
         radio.checked = this._toBoolean(currentValue) === (option === 'True');
+        radio.dataset.controlKey = control.key;
+        radio.dataset.controlKind = 'RadioButton';
         radio.addEventListener('change', (event) => {
           if (event.target.checked) {
             this._updateNodeConfigValue(node.id, control.key, option);
@@ -2339,6 +2714,8 @@ export class NodeEditor {
         select.className = 'node-control-select-input';
         select.name = control.key;
         select.id = inputId;
+        select.dataset.controlKey = control.key;
+        select.dataset.controlKind = 'SelectBox';
         options.forEach((option) => {
           const opt = document.createElement('option');
           opt.value = option.value;
@@ -2370,16 +2747,52 @@ export class NodeEditor {
     const keyLabel = document.createElement('span');
     keyLabel.className = 'node-control-key';
     keyLabel.textContent = labelText;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'node-control-input';
+    const isTextArea = controlKind === 'TextBox';
+    const input = isTextArea ? document.createElement('textarea') : document.createElement('input');
+    if (!isTextArea) {
+      input.type = 'text';
+    }
+    input.className = isTextArea ? 'node-control-input node-control-textarea' : 'node-control-input';
     input.name = control.key;
     input.id = inputId;
-    input.value = currentValue || '';
+    const bindsToInput = !!control.bindsToInput;
+    const rawKey = `${control.key}__raw`;
+    let displayValue = currentValue || '';
+    if (bindsToInput) {
+      const storedRaw = node.config[rawKey];
+      if (storedRaw !== undefined) {
+        displayValue = storedRaw || '';
+      } else if (currentValue) {
+        const derivedRaw = this._extractLiteralRaw(currentValue);
+        displayValue = derivedRaw;
+        this._updateNodeConfigValue(node.id, rawKey, derivedRaw, { silent: true });
+      } else {
+        displayValue = '';
+      }
+    }
+    input.value = displayValue;
     if (control.placeholder) input.placeholder = control.placeholder;
     input.autocomplete = 'off';
+    if (isTextArea) {
+      input.rows = Math.max(1, Number(control.rows) || 2);
+    }
+    input.dataset.controlKey = control.key;
+    input.dataset.controlKind = control.controlKind || 'TextBox';
+    if (bindsToInput) {
+      input.dataset.bindsToInput = control.bindsToInput;
+    }
     input.addEventListener('input', (event) => {
-      this._updateNodeConfigValue(node.id, control.key, event.target.value);
+      const textValue = event.target.value;
+      if (bindsToInput) {
+        this._updateNodeConfigValue(node.id, rawKey, textValue, { silent: true });
+        const literalValue = textValue ? toPowerShellLiteral(textValue) : '';
+        this._updateNodeConfigValue(node.id, control.key, literalValue, {
+          silent: false,
+          displayValue: textValue,
+        });
+      } else {
+        this._updateNodeConfigValue(node.id, control.key, textValue);
+      }
     });
     this._preventNodeDrag(field);
     this._preventNodeDrag(input);
@@ -2458,11 +2871,29 @@ export class NodeEditor {
       return outputNames.get(key);
     };
 
+    const getUiOutputForScript = (nodeId, outputName) => {
+      const node = this.nodes.get(nodeId);
+      if (!node) return '';
+      const rawKey = `${outputName}__raw`;
+      const stored = node.config[outputName];
+      if (stored) {
+        return stored;
+      }
+      if (Object.prototype.hasOwnProperty.call(node.config, rawKey)) {
+        return toPowerShellLiteral(node.config[rawKey]);
+      }
+      return '';
+    };
+
     const getInputVar = (nodeId, inputName) => {
       const connection = this.connections.find(
         (c) => c.toNode === nodeId && c.toPort === inputName
       );
       if (connection) {
+        const sourceNode = this.nodes.get(connection.fromNode);
+        if (sourceNode?.definition?.execution === 'ui') {
+          return getUiOutputForScript(connection.fromNode, connection.fromPort);
+        }
         return getOutputVar(connection.fromNode, connection.fromPort);
       }
       const node = this.nodes.get(nodeId);
@@ -2480,6 +2911,9 @@ export class NodeEditor {
       if (!node) return;
       const def = nodeDefs[node.type];
       if (!def) return;
+      if (def.execution === 'ui') {
+        return;
+      }
       const inputs = {};
       const outputs = {};
       (def.inputs || []).forEach((inputName) => {
@@ -2573,16 +3007,24 @@ export class NodeEditor {
       this._renderNode(node);
     });
     this.connections = (data.connections || []).map((connection) => ({ ...connection }));
-    this._drawConnections();
     this.resize();
     this._clearDirty();
   }
 
   clearGraph(clearStorage = true) {
+    this.nodes.forEach((node) => {
+      if (typeof node.teardown === 'function') {
+        try {
+          node.teardown();
+        } catch (error) {
+          console.warn('Failed to cleanup node UI', error);
+        }
+      }
+    });
     this.nodes.clear();
     this.connections = [];
     this.nodeLayer.innerHTML = '';
-    this._drawConnections();
+    this._applyViewport({ refreshActiveConnection: false });
     this.nodeCount = 0;
     if (clearStorage && this.persistence?.clear) {
       this.persistence.clear();
@@ -2601,6 +3043,12 @@ export class NodeEditor {
 
   _bindPointerEvents() {
     this.nodeLayer.addEventListener('pointerdown', (event) => {
+      if (event.button === 1 || event.button === 2) {
+        if (this._beginPan(event)) {
+          this._clearConnectionSelection({ redraw: false });
+          return;
+        }
+      }
       const isNodeTarget = Boolean(event.target.closest('.node'));
       if (!isNodeTarget) {
         const connection = this._hitTestConnection(event.clientX, event.clientY);
@@ -2635,6 +3083,12 @@ export class NodeEditor {
         this._hidePortContextMenu();
       }
     });
+
+    this.nodeLayer.addEventListener(
+      'wheel',
+      (event) => this._handleZoom(event),
+      { passive: false }
+    );
   }
 
   _bindKeyboardEvents() {
@@ -2692,6 +3146,13 @@ export class NodeEditor {
   _removeNode(nodeId, { markDirty = true } = {}) {
     const node = this.nodes.get(nodeId);
     if (!node) return;
+    if (typeof node.teardown === 'function') {
+      try {
+        node.teardown();
+      } catch (error) {
+        console.warn('Failed to cleanup node UI', error);
+      }
+    }
     this.nodes.delete(nodeId);
     const el = this.nodeLayer.querySelector(`.node[data-id="${nodeId}"]`);
     if (el) {
@@ -2765,10 +3226,11 @@ export class NodeEditor {
         button.textContent = def.label;
         button.addEventListener('click', () => {
           const layerRect = this.nodeLayer.getBoundingClientRect();
-          const position = {
+          const screen = {
             x: Math.max(16, Math.min(x, layerRect.width - 200)),
             y: Math.max(16, Math.min(y, layerRect.height - 120)),
           };
+          const position = this._screenToWorld(screen);
           const newNode = this._createNode(def, position);
           if (source.portType === 'output') {
             const inputName = (def.inputs || []).find((input) => input === source.portName);

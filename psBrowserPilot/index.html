@@ -156,6 +156,14 @@
                 </label>
               </div>
               <div class="field-group">
+                <label for="node-execution">ノード種別</label>
+                <select id="node-execution" name="execution">
+                  <option value="powershell">PowerShell 実行ノード</option>
+                  <option value="ui">GUI ノード</option>
+                </select>
+                <p class="field-hint">GUIノードはPowerShellスクリプトに含まれず、ブラウザUI上での操作に利用されます。</p>
+              </div>
+              <div class="field-group">
                 <label for="node-inputs">入力ポート（1行につき1件）</label>
                 <textarea id="node-inputs" name="inputs" rows="3" placeholder="InputValue"></textarea>
               </div>
@@ -203,6 +211,7 @@
         SAMPLE_NODE_TEMPLATES,
         createEmptySpec,
       } from './core/nodeLibrary.js';
+      import { BUILTIN_NODES } from './core/builtinNodes.js';
       import { NodeEditor } from './core/nodeEngine.js';
       import { loadGraph, saveGraph, clearGraph } from './storage/fileStore.js';
       import { exportScript } from './export/scriptExport.js';
@@ -224,7 +233,7 @@
       const testServerBtn = document.getElementById('test-server');
       const serverStatus = document.getElementById('server-status');
 
-      let customSpecs = listCustomNodeSpecs();
+      let customSpecs = [];
       let editor;
       let powerShellServerUrl = loadServerUrl();
 
@@ -283,15 +292,25 @@
         }
       };
 
-      serverUrlInput?.addEventListener('blur', (event) => {
+      serverUrlInput?.addEventListener('blur', async (event) => {
         applyServerUrl(event.target.value);
+        try {
+          await refreshLibrary({ persist: false, silent: true });
+        } catch (error) {
+          console.error('Failed to refresh library after server URL change', error);
+        }
       });
 
-      serverUrlInput?.addEventListener('keydown', (event) => {
+      serverUrlInput?.addEventListener('keydown', async (event) => {
         if (event.key === 'Enter') {
           event.preventDefault();
           applyServerUrl(event.currentTarget.value);
           testServerConnection();
+          try {
+            await refreshLibrary({ persist: false, silent: true });
+          } catch (error) {
+            console.error('Failed to refresh library after server URL change', error);
+          }
         }
       });
 
@@ -315,10 +334,46 @@
         }, 1800);
       };
 
-      const refreshLibrary = ({ persist = true } = {}) => {
-        customSpecs = listCustomNodeSpecs();
+      const cloneBuiltinDefinition = (definition) => ({
+        ...definition,
+        inputs: Array.isArray(definition.inputs) ? [...definition.inputs] : [],
+        outputs: Array.isArray(definition.outputs) ? [...definition.outputs] : [],
+        controls: Array.isArray(definition.controls)
+          ? definition.controls.map((control) => ({ ...control }))
+          : undefined,
+        initialConfig:
+          definition.initialConfig && typeof definition.initialConfig === 'object'
+            ? { ...definition.initialConfig }
+            : undefined,
+      });
+
+      const buildLibraryDefinitions = () => [
+        ...BUILTIN_NODES.map(cloneBuiltinDefinition),
+        ...specsToDefinitions(customSpecs),
+      ];
+
+      const loadCustomSpecs = async ({ silent = false } = {}) => {
+        try {
+          const specs = await listCustomNodeSpecs({ serverUrl: powerShellServerUrl });
+          customSpecs = specs;
+          return specs;
+        } catch (error) {
+          console.error('Failed to load custom nodes', error);
+          if (!silent) {
+            showToast('カスタムノードの取得に失敗しました。');
+          }
+          throw error;
+        }
+      };
+
+      const refreshLibrary = async ({ persist = true, silent = false } = {}) => {
+        try {
+          await loadCustomSpecs({ silent });
+        } catch (error) {
+          // Keep existing specs on failure.
+        }
         if (editor) {
-          editor.setLibrary(specsToDefinitions(customSpecs), { persist });
+          editor.setLibrary(buildLibraryDefinitions(), { persist });
         }
         renderCustomNodeList();
       };
@@ -346,6 +401,7 @@
         id: document.getElementById('node-id'),
         label: document.getElementById('node-label'),
         category: document.getElementById('node-category'),
+        execution: document.getElementById('node-execution'),
         inputs: document.getElementById('node-inputs'),
         outputs: document.getElementById('node-outputs'),
         constants: document.getElementById('node-constants'),
@@ -602,6 +658,7 @@
         if (!spec) return null;
         return {
           ...spec,
+          execution: spec?.execution === 'ui' ? 'ui' : 'powershell',
           inputs: [...(spec.inputs || [])],
           outputs: [...(spec.outputs || [])],
           constants: cloneConstants(spec.constants || []),
@@ -642,31 +699,34 @@
         return candidate;
       };
 
-      const duplicateSpecWithNewId = (spec) => {
+      const duplicateSpecWithNewId = async (spec) => {
         if (!spec) return null;
         const working = cloneSpec(spec);
+        working.execution = working.execution === 'ui' ? 'ui' : 'powershell';
         const preferredBaseId = working.id || sanitizeToken(working.label).toLowerCase();
         working.id = generateUniqueNodeId(preferredBaseId);
         working.label = ensureDuplicatedLabel(working.label);
         working.category = working.category || 'Custom';
         working.script = working.script || '';
-        return saveCustomNodeSpec(working);
+        return saveCustomNodeSpec(working, {
+          serverUrl: powerShellServerUrl,
+        });
       };
 
-      const duplicateCustomNodeById = (specId) => {
+      const duplicateCustomNodeById = async (specId) => {
         const spec = findSpecById(specId);
         if (!spec) {
           return null;
         }
-        const saved = duplicateSpecWithNewId(spec);
+        const saved = await duplicateSpecWithNewId(spec);
         if (saved) {
           showToast('ノードを複製しました。');
-          refreshLibrary();
+          await refreshLibrary();
         }
         return saved;
       };
 
-      const removeCustomNodeSpecs = (ids, { skipConfirm = false, silent = false } = {}) => {
+      const removeCustomNodeSpecs = async (ids, { skipConfirm = false, silent = false } = {}) => {
         const uniqueIds = Array.isArray(ids)
           ? Array.from(new Set(ids.filter(Boolean)))
           : [];
@@ -687,8 +747,11 @@
           }
         }
 
-        specs.forEach((spec) => deleteCustomNodeSpec(spec.id));
-        refreshLibrary();
+        for (const spec of specs) {
+          await deleteCustomNodeSpec(spec.id, { serverUrl: powerShellServerUrl });
+        }
+
+        await refreshLibrary({ silent: true });
 
         if (specs.some((spec) => spec.id === originalId)) {
           if (customSpecs.length) {
@@ -712,8 +775,8 @@
         };
       };
 
-      const deleteCustomNodeById = (specId, options = {}) => {
-        const result = removeCustomNodeSpecs([specId], options);
+      const deleteCustomNodeById = async (specId, options = {}) => {
+        const result = await removeCustomNodeSpecs([specId], options);
         if (result.cancelled) {
           return false;
         }
@@ -727,6 +790,7 @@
         fields.label.value = spec.label || '';
         fields.id.value = fromSample ? '' : spec.id || '';
         fields.category.value = fromSample ? 'Custom' : spec.category || 'Custom';
+        fields.execution.value = spec.execution === 'ui' ? 'ui' : 'powershell';
         fields.inputs.value = (spec.inputs || []).join('\n');
         fields.outputs.value = (spec.outputs || []).join('\n');
         fields.constants.value = formatConstants(spec.constants || []);
@@ -762,9 +826,9 @@
           removeButton.type = 'button';
           removeButton.className = 'designer-remove';
           removeButton.textContent = '削除';
-          removeButton.addEventListener('click', (event) => {
+          removeButton.addEventListener('click', async (event) => {
             event.stopPropagation();
-            deleteCustomNodeById(spec.id);
+            await deleteCustomNodeById(spec.id);
           });
           item.append(editButton, meta, removeButton);
           customListEl.appendChild(item);
@@ -785,6 +849,7 @@
                 id: '',
                 label: sample.label.replace(/^Sample:\s*/i, ''),
                 category: 'Custom',
+                execution: sample.execution === 'ui' ? 'ui' : 'powershell',
                 inputs: [...(sample.inputs || [])],
                 outputs: [...(sample.outputs || [])],
                 constants: cloneConstants(sample.constants || []),
@@ -818,7 +883,7 @@
         setTimeout(() => editor?.resize(), 260);
       };
 
-      const openDesignerForSpec = (specId, fallbackSpec) => {
+      const openDesignerForSpec = async (specId, fallbackSpec) => {
         ensureDesignerInitialized();
         const findSpec = () => customSpecs.find((item) => item.id === specId);
         let spec = findSpec();
@@ -828,7 +893,7 @@
         }
 
         if (!spec) {
-          refreshLibrary({ persist: false });
+          await refreshLibrary({ persist: false, silent: true });
           spec = findSpec();
         }
 
@@ -849,32 +914,39 @@
         setTimeout(() => editor?.resize(), 260);
       };
 
+      try {
+        await loadCustomSpecs({ silent: true });
+      } catch (error) {
+        console.error('Failed to load custom nodes during initialization', error);
+      }
+      renderCustomNodeList();
+
       editor = new NodeEditor({
         paletteEl,
         nodeLayer,
         connectionLayer,
         nodeTemplate,
-        library: specsToDefinitions(customSpecs),
+        library: buildLibraryDefinitions(),
         onGenerateScript: exportScript,
         onRunScript: (script) =>
           runScriptWithDialog(script, { serverUrl: powerShellServerUrl }),
         onEditCustomNode: openDesignerForSpec,
-        onDuplicatePaletteNode: ({ definitionId }) => {
-          const saved = duplicateCustomNodeById(definitionId);
+        onDuplicatePaletteNode: async ({ definitionId }) => {
+          const saved = await duplicateCustomNodeById(definitionId);
           if (!saved) {
             return null;
           }
           const [definition] = specsToDefinitions([saved]);
           return { id: saved.id, definition };
         },
-        onRemovePaletteNode: ({
+        onRemovePaletteNode: async ({
           definitionId,
           definitionIds,
           skipConfirm,
           silent,
         }) => {
           if (Array.isArray(definitionIds) && definitionIds.length) {
-            const result = deleteCustomNodesByIds(definitionIds, {
+            const result = await deleteCustomNodesByIds(definitionIds, {
               skipConfirm,
               silent,
             });
@@ -916,23 +988,24 @@
         designerStatus.textContent = '新しいノードを作成しています。';
       });
 
-      duplicateNodeBtn.addEventListener('click', () => {
+      duplicateNodeBtn.addEventListener('click', async () => {
         const label = fields.label.value.trim();
         const spec = {
           id: sanitizeToken(fields.id.value.trim()) || originalId || sanitizeToken(label).toLowerCase(),
           label: label || 'Untitled node',
           category: fields.category.value.trim() || 'Custom',
+          execution: fields.execution.value === 'ui' ? 'ui' : 'powershell',
           inputs: parsePortList(fields.inputs.value),
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
           script: fields.script.value.replace(/\r\n/g, '\n'),
         };
-        const saved = duplicateSpecWithNewId(spec);
+        const saved = await duplicateSpecWithNewId(spec);
         if (!saved) {
           return;
         }
         showToast('カスタムノードを複製しました。');
-        refreshLibrary();
+        await refreshLibrary();
         loadSpecIntoForm(saved);
       });
 
@@ -953,7 +1026,7 @@
         }
       });
 
-      designerForm.addEventListener('submit', (event) => {
+      designerForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         const label = fields.label.value.trim();
         let id = sanitizeToken(fields.id.value.trim());
@@ -967,6 +1040,7 @@
           id,
           label: label || 'Untitled node',
           category: fields.category.value.trim() || 'Custom',
+          execution: fields.execution.value === 'ui' ? 'ui' : 'powershell',
           inputs: parsePortList(fields.inputs.value),
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
@@ -979,13 +1053,20 @@
             return;
           }
         }
-        const saved = saveCustomNodeSpec(spec);
-        showToast('カスタムノードを保存しました (ローカルストレージ)。');
-        refreshLibrary();
+        let saved;
+        try {
+          saved = await saveCustomNodeSpec(spec, {
+            serverUrl: powerShellServerUrl,
+            previous: existing,
+          });
+        } catch (error) {
+          alert(`カスタムノードの保存に失敗しました: ${error.message}`);
+          return;
+        }
+        showToast('カスタムノードを保存しました。');
+        await refreshLibrary();
         loadSpecIntoForm(saved);
       });
-
-      renderCustomNodeList();
 
     </script>
   </body>
