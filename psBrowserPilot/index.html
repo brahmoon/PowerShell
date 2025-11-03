@@ -180,14 +180,48 @@
                   placeholder="TextBox | threshold | # TODO: set value"
                 ></textarea>
               </div>
-              <div class="field-group">
-                <label for="node-script">スクリプト</label>
+              <div class="field-group" data-execution="powershell">
+                <label for="node-script">PowerShell スクリプト</label>
                 <textarea
                   id="node-script"
                   name="script"
                   class="code-area"
                   rows="12"
                   placeholder="# {{input.Value}} や {{config.threshold}} のようなプレースホルダーを使用できます。"
+                ></textarea>
+              </div>
+              <div class="field-group" data-execution="ui">
+                <label for="node-ui-markup">UI マークアップ (HTML)</label>
+                <textarea
+                  id="node-ui-markup"
+                  name="uiMarkup"
+                  rows="6"
+                  placeholder="&lt;div class=&quot;custom-ui-node&quot;&gt;...&lt;/div&gt;"
+                ></textarea>
+                <p class="field-hint">ノードのコントロール領域に挿入されるHTMLを定義します。</p>
+              </div>
+              <div class="field-group" data-execution="ui">
+                <label for="node-ui-script">UI スクリプト (JavaScript)</label>
+                <textarea
+                  id="node-ui-script"
+                  name="uiScript"
+                  class="code-area"
+                  rows="12"
+                  placeholder="// context.updateConfig(...) を使って出力値を更新します。"
+                ></textarea>
+                <p class="field-hint">
+                  <code>context</code> には <code>updateConfig</code>・<code>resolveInput</code>・
+                  <code>toPowerShellLiteral</code> などのヘルパーが含まれます。
+                </p>
+              </div>
+              <div class="field-group" data-execution="ui">
+                <label for="node-ui-style">UI スタイル (CSS)</label>
+                <textarea
+                  id="node-ui-style"
+                  name="uiStyle"
+                  class="code-area"
+                  rows="10"
+                  placeholder="/* ノード専用のスタイルを記述します */"
                 ></textarea>
               </div>
               <p id="designer-status" class="designer-status" role="status" aria-live="polite"></p>
@@ -411,6 +445,9 @@
       const duplicateNodeBtn = document.getElementById('duplicate-node');
       const designerStatus = document.getElementById('designer-status');
       const scriptField = document.getElementById('node-script');
+      const uiMarkupField = document.getElementById('node-ui-markup');
+      const uiScriptField = document.getElementById('node-ui-script');
+      const uiStyleField = document.getElementById('node-ui-style');
       const openSettingsBtn = document.getElementById('open-settings');
       const settingsDialog = document.getElementById('settings-dialog');
       const closeSettingsBtn = document.getElementById('close-settings');
@@ -418,6 +455,7 @@
 
       const THEME_STORAGE_KEY = 'nodeflow.theme';
       const CONSTANT_PLACEHOLDER = '# TODO: set value';
+      const DEFAULT_UI_SPEC = createEmptySpec('ui').ui;
 
       const fields = {
         id: document.getElementById('node-id'),
@@ -428,10 +466,43 @@
         outputs: document.getElementById('node-outputs'),
         constants: document.getElementById('node-constants'),
         script: scriptField,
+        uiMarkup: uiMarkupField,
+        uiScript: uiScriptField,
+        uiStyle: uiStyleField,
       };
+
+      fields.execution?.addEventListener('change', () => {
+        const mode = fields.execution.value === 'ui' ? 'ui' : 'powershell';
+        updateDesignerFieldVisibility();
+        if (mode === 'ui') {
+          const hasUiContent =
+            fields.uiMarkup.value.trim() ||
+            fields.uiScript.value.trim() ||
+            fields.uiStyle.value.trim();
+          if (!hasUiContent) {
+            fields.uiMarkup.value = DEFAULT_UI_SPEC.markup || '';
+            fields.uiScript.value = DEFAULT_UI_SPEC.script || '';
+            fields.uiStyle.value = DEFAULT_UI_SPEC.style || '';
+          }
+        } else if (!fields.script.value.trim()) {
+          fields.script.value = createEmptySpec('powershell').script;
+        }
+      });
 
       let originalId = '';
       let designerInitialized = false;
+
+      const updateDesignerFieldVisibility = () => {
+        const mode = fields.execution.value === 'ui' ? 'ui' : 'powershell';
+        designerForm
+          ?.querySelectorAll('[data-execution]')
+          .forEach((section) => {
+            const target = section.dataset.execution;
+            section.hidden = !(target === mode || target === 'both' || target === 'shared');
+          });
+      };
+
+      updateDesignerFieldVisibility();
 
       const applyTheme = (theme) => {
         const mode = theme === 'dark' ? 'dark' : 'light';
@@ -664,6 +735,18 @@
           }, [])
           .join('\n');
 
+      const cloneUiSpec = (ui) => ({
+        markup: typeof ui?.markup === 'string' ? ui.markup : '',
+        script: typeof ui?.script === 'string' ? ui.script : '',
+        style: typeof ui?.style === 'string' ? ui.style : '',
+      });
+
+      const readUiSpecFromFields = () => ({
+        markup: fields.uiMarkup.value.replace(/\r\n/g, '\n'),
+        script: fields.uiScript.value.replace(/\r\n/g, '\n'),
+        style: fields.uiStyle.value.replace(/\r\n/g, '\n'),
+      });
+
       const cloneConstants = (constants) =>
         (constants || []).map((constant) =>
           constant
@@ -685,6 +768,7 @@
           outputs: [...(spec.outputs || [])],
           constants: cloneConstants(spec.constants || []),
           script: spec.script || '',
+          ui: cloneUiSpec(spec.ui || DEFAULT_UI_SPEC),
         };
       };
 
@@ -817,6 +901,11 @@
         fields.outputs.value = (spec.outputs || []).join('\n');
         fields.constants.value = formatConstants(spec.constants || []);
         fields.script.value = spec.script || '';
+        const uiSpec = cloneUiSpec(spec.ui || DEFAULT_UI_SPEC);
+        fields.uiMarkup.value = uiSpec.markup || '';
+        fields.uiScript.value = uiSpec.script || '';
+        fields.uiStyle.value = uiSpec.style || '';
+        updateDesignerFieldVisibility();
         designerStatus.textContent = fromSample
           ? 'サンプルノードを読み込みました。編集して保存するとカスタムノードとして登録されます。'
           : spec.id
@@ -876,6 +965,7 @@
                 outputs: [...(sample.outputs || [])],
                 constants: cloneConstants(sample.constants || []),
                 script: sample.script,
+                ui: cloneUiSpec(sample.ui || DEFAULT_UI_SPEC),
               },
               { fromSample: true }
             )
@@ -1007,7 +1097,8 @@
       });
 
       newNodeBtn.addEventListener('click', () => {
-        loadSpecIntoForm(createEmptySpec());
+        const mode = fields.execution.value === 'ui' ? 'ui' : 'powershell';
+        loadSpecIntoForm(createEmptySpec(mode));
         designerStatus.textContent = '新しいノードを作成しています。';
       });
 
@@ -1022,6 +1113,7 @@
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
           script: fields.script.value.replace(/\r\n/g, '\n'),
+          ui: readUiSpecFromFields(),
         };
         const saved = await duplicateSpecWithNewId(spec);
         if (!saved) {
@@ -1033,21 +1125,27 @@
       });
 
       resetFormBtn.addEventListener('click', () => {
-        loadSpecIntoForm(createEmptySpec());
+        const mode = fields.execution.value === 'ui' ? 'ui' : 'powershell';
+        loadSpecIntoForm(createEmptySpec(mode));
         designerStatus.textContent = '入力をリセットしました。';
       });
 
-      scriptField.addEventListener('keydown', (event) => {
-        if (event.key === 'Tab') {
-          event.preventDefault();
-          const { selectionStart, selectionEnd, value } = scriptField;
-          const insertion = '  ';
-          scriptField.value = `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionEnd)}`;
-          const caret = selectionStart + insertion.length;
-          scriptField.selectionStart = caret;
-          scriptField.selectionEnd = caret;
-        }
-      });
+      const attachTabHandler = (textarea) => {
+        if (!textarea) return;
+        textarea.addEventListener('keydown', (event) => {
+          if (event.key === 'Tab') {
+            event.preventDefault();
+            const { selectionStart, selectionEnd, value } = textarea;
+            const insertion = '  ';
+            textarea.value = `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionEnd)}`;
+            const caret = selectionStart + insertion.length;
+            textarea.selectionStart = caret;
+            textarea.selectionEnd = caret;
+          }
+        });
+      };
+
+      [scriptField, uiScriptField, uiStyleField, uiMarkupField].forEach(attachTabHandler);
 
       designerForm.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -1068,6 +1166,7 @@
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
           script: fields.script.value.replace(/\r\n/g, '\n'),
+          ui: readUiSpecFromFields(),
         };
         const existing = customSpecs.find((item) => item.id === spec.id);
         if (existing && existing.id !== originalId) {
