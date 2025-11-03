@@ -33,13 +33,6 @@ const sanitizeId = (value) =>
     .replace(/\s+/g, '_')
     .replace(/[^A-Za-z0-9_]/g, '_');
 
-const normalizeExecutionMode = (value) =>
-  String(value ?? '')
-    .trim()
-    .toLowerCase() === 'ui'
-    ? 'ui'
-    : 'powershell';
-
 const normalizeList = (value) => {
   if (Array.isArray(value)) {
     return value
@@ -142,7 +135,6 @@ const normalizeSpec = (spec, previous = null) => {
     id: baseId || (label ? sanitizeId(label) : ''),
     label: label || 'Untitled node',
     category: category || 'Custom',
-    execution: normalizeExecutionMode(spec?.execution),
     inputs: normalizeList(spec?.inputs),
     outputs: normalizeList(spec?.outputs),
     constants: normalizeConstants(spec?.constants),
@@ -198,7 +190,6 @@ export const SAMPLE_NODE_TEMPLATES = [
     id: 'sample_log_message',
     label: 'Sample: Log Message',
     category: 'Samples',
-    execution: 'powershell',
     description:
       'Demonstrates how to emit a message using a constant input and return the same value as an output.',
     inputs: [],
@@ -216,7 +207,6 @@ export const SAMPLE_NODE_TEMPLATES = [
     id: 'sample_math_add',
     label: 'Sample: Sum Inputs',
     category: 'Samples',
-    execution: 'powershell',
     description: 'Shows how to combine two incoming values and expose a calculated result.',
     inputs: ['FirstValue', 'SecondValue'],
     outputs: ['Total'],
@@ -243,7 +233,6 @@ export const SAMPLE_NODE_TEMPLATES = [
     id: 'sample_invoke_command',
     label: 'Sample: Invoke ScriptBlock',
     category: 'Samples',
-    execution: 'powershell',
     description:
       'Executes a custom script block with parameters taken from inputs and constants, then exposes the result.',
     inputs: ['ScriptInput'],
@@ -267,7 +256,6 @@ export const createEmptySpec = () => ({
   id: '',
   label: '',
   category: 'Custom',
-  execution: 'powershell',
   inputs: [],
   outputs: [],
   constants: [
@@ -307,16 +295,10 @@ export const specsToDefinitions = (specs) =>
   (specs || [])
     .map((spec) => {
       const normalized = normalizeSpec(spec, spec);
-      const sanitizedInputSet = new Set(
-        normalized.inputs.map((input) => sanitizeId(input))
-      );
-      const initialConfig = {};
-
-      const definition = {
+      return {
         id: normalized.id,
         label: normalized.label,
         category: normalized.category || 'Custom',
-        execution: normalized.execution,
         inputs: normalized.inputs,
         outputs: normalized.outputs,
         controls: normalized.constants.map((constant) => {
@@ -331,7 +313,7 @@ export const specsToDefinitions = (specs) =>
                     ].map((option) => String(option ?? '').trim())
                   )
                 ).filter(Boolean)
-                : [];
+              : [];
           let defaultValue;
           if (controlKind === 'CheckBox' || controlKind === 'RadioButton') {
             defaultValue = normalizeBooleanConstant(constant.value);
@@ -340,11 +322,6 @@ export const specsToDefinitions = (specs) =>
             defaultValue = optionValues.includes(preferred) ? preferred : optionValues[0] || '';
           } else {
             defaultValue = constant.value;
-          }
-          const bindsToInput =
-            controlKind === 'TextBox' && sanitizedInputSet.has(constant.key);
-          if (bindsToInput) {
-            initialConfig[`${constant.key}__raw`] = '';
           }
           return {
             key: constant.key,
@@ -361,19 +338,12 @@ export const specsToDefinitions = (specs) =>
               controlKind === 'SelectBox'
                 ? optionValues.map((value) => ({ value, label: value }))
                 : undefined,
-            bindsToInput: bindsToInput ? constant.key : undefined,
           };
         }),
         script: createScriptFunction(normalized.script),
         specId: normalized.id,
         sourceSpec: normalized,
       };
-
-      if (Object.keys(initialConfig).length) {
-        definition.initialConfig = initialConfig;
-      }
-
-      return definition;
     })
     .filter((definition, index, self) =>
       definition.id && self.findIndex((item) => item.id === definition.id) === index
