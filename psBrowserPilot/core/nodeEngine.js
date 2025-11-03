@@ -37,6 +37,9 @@ export class NodeEditor {
     paletteEl,
     nodeLayer,
     connectionLayer,
+    propertyDialog,
+    propertyForm,
+    propertyFields,
     nodeTemplate,
     library,
     onGenerateScript,
@@ -49,6 +52,9 @@ export class NodeEditor {
     this.paletteEl = paletteEl;
     this.nodeLayer = nodeLayer;
     this.connectionLayer = connectionLayer;
+    this.propertyDialog = propertyDialog;
+    this.propertyForm = propertyForm;
+    this.propertyFields = propertyFields;
     this.nodeTemplate = nodeTemplate;
     this.library = [];
     this.onGenerateScript = onGenerateScript;
@@ -80,8 +86,6 @@ export class NodeEditor {
     this.paletteDropIndicator = null;
     this.paletteMenu = null;
     this._paletteMenuOutsideHandler = null;
-
-    this.electronAPI = typeof window !== 'undefined' ? window.electronAPI : null;
 
     this.ctx = this.connectionLayer.getContext('2d');
 
@@ -1488,11 +1492,11 @@ export class NodeEditor {
     el.dataset.id = node.id;
     el.style.transform = `translate(${node.position.x}px, ${node.position.y}px)`;
     el.querySelector('.node-label').textContent = node.definition.label;
-
-    const controlsContainer = el.querySelector('.node-controls');
-    if (controlsContainer) {
-      this._renderNodeControls(node, controlsContainer);
-    }
+    const configBtn = el.querySelector('.node-config');
+    configBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this._openPropertyEditor(node.id);
+    });
 
     const deleteBtn = el.querySelector('.node-delete');
     if (deleteBtn) {
@@ -1591,9 +1595,9 @@ export class NodeEditor {
   _startDrag(event, nodeId) {
     if (
       event.target.closest('.handle') ||
+      event.target.classList.contains('node-config') ||
       event.target.classList.contains('node-delete') ||
-      event.target.closest('.node-open-designer') ||
-      event.target.closest('.node-controls')
+      event.target.closest('.node-open-designer')
     ) {
       return;
     }
@@ -1904,283 +1908,109 @@ export class NodeEditor {
     this._markDirty();
   }
 
-  _preventNodeDrag(element) {
-    if (!element) return;
-    element.addEventListener('pointerdown', (event) => event.stopPropagation());
-  }
-
-  _bindControlFocus(nodeId, element) {
-    if (!element) return;
-    element.addEventListener('focus', () =>
-      this._selectNode(nodeId, { additive: false, toggle: false })
-    );
-  }
-
-  _toBoolean(value) {
-    return /^(true|1|yes|on)$/i.test(String(value ?? ''));
-  }
-
-  _updateNodeConfigValue(nodeId, key, value, { silent = false } = {}) {
+  _openPropertyEditor(nodeId) {
     const node = this.nodes.get(nodeId);
     if (!node) return;
-    const next = value ?? '';
-    if (node.config[key] === next) return;
-    node.config[key] = next;
-    if (!silent) {
-      this._markDirty();
-    }
-  }
+    this.propertyFields.innerHTML = '';
+    this.propertyDialog.dataset.nodeId = nodeId;
+    this.propertyDialog.querySelector('#property-title').textContent = `${node.definition.label} settings`;
 
-  async _requestReferenceFile() {
-    if (this.electronAPI?.selectLocalFile) {
-      try {
-        const result = await this.electronAPI.selectLocalFile({});
-        if (!result?.canceled && result?.filePath) {
-          return result.filePath;
-        }
-      } catch (error) {
-        console.error('Failed to select file', error);
+    const controls = node.definition.controls || [];
+    const supportsDesigner = Boolean(this.onEditCustomNode) && Boolean(node.definition.specId);
+
+    if (controls.length) {
+      const header = document.createElement('div');
+      header.className = 'property-constants-header';
+      const title = document.createElement('span');
+      title.className = 'property-constants-title';
+      title.textContent = '定数 (Key / Value)';
+      header.appendChild(title);
+      if (supportsDesigner) {
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.className = 'property-edit-spec';
+        editButton.setAttribute('title', 'カスタムノードを編集');
+        editButton.setAttribute('aria-label', 'カスタムノードを編集');
+        editButton.textContent = '<>';
+        editButton.addEventListener('click', (event) => {
+          event.preventDefault();
+          this.propertyDialog.close();
+          this.propertyForm.reset();
+          this.onEditCustomNode?.(node.definition.specId, node.definition.sourceSpec);
+        });
+        header.appendChild(editButton);
       }
+      this.propertyFields.appendChild(header);
     }
-    return new Promise((resolve) => {
-      const picker = document.createElement('input');
-      picker.type = 'file';
-      picker.style.display = 'none';
-      const cleanup = () => {
-        picker.remove();
-      };
-      picker.addEventListener(
-        'change',
-        () => {
-          const file = picker.files?.[0];
-          cleanup();
-          resolve(file ? file.path || file.name || '' : '');
-        },
-        { once: true }
-      );
-      const cancel = () => {
-        cleanup();
-        resolve('');
-      };
-      picker.addEventListener('cancel', cancel, { once: true });
-      picker.addEventListener('blur', cancel, { once: true });
-      document.body.appendChild(picker);
-      picker.click();
-    });
-  }
 
-  _createNodeControlElement(node, control) {
-    if (!control || !control.key) return null;
-    const controlKind = control.controlKind || 'TextBox';
-    const labelText = control.displayKey || control.key;
-    const currentValue = node.config[control.key] ?? control.default ?? '';
-    const inputId = `${node.id}_${control.key}`;
-
-    if (controlKind === 'Reference') {
-      const field = document.createElement('div');
-      field.className = 'node-control node-control-reference';
+    controls.forEach((control) => {
+      const field = document.createElement('label');
+      field.className = 'property-field';
       const keyLabel = document.createElement('span');
-      keyLabel.className = 'node-control-key';
-      keyLabel.textContent = labelText;
-      const controlsWrapper = document.createElement('div');
-      controlsWrapper.className = 'node-reference-field';
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'node-control-input';
+      keyLabel.className = 'property-field-key';
+      keyLabel.textContent = control.displayKey || control.key;
+      let input;
+      switch (control.type) {
+        case 'select':
+          input = document.createElement('select');
+          input.className = 'property-field-input select';
+          (control.options || []).forEach((option) => {
+            const opt = document.createElement('option');
+            opt.value = option.value;
+            opt.textContent = option.label;
+            input.appendChild(opt);
+          });
+          break;
+        case 'textarea':
+          input = document.createElement('textarea');
+          input.className = 'property-field-input textarea';
+          break;
+        default:
+          input = document.createElement('input');
+          input.type = control.type || 'text';
+          input.className = 'property-field-input';
+      }
+      const inputId = `${node.id}_${control.key}`;
       input.name = control.key;
       input.id = inputId;
-      input.value = currentValue || '';
+      input.value = node.config[control.key] ?? control.default ?? '';
       if (control.placeholder) input.placeholder = control.placeholder;
       input.autocomplete = 'off';
-      input.addEventListener('input', (event) => {
-        this._updateNodeConfigValue(node.id, control.key, event.target.value);
-      });
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'node-reference-button';
-      button.textContent = '参照';
-      button.addEventListener('click', async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const filePath = await this._requestReferenceFile();
-        if (filePath) {
-          input.value = filePath;
-          this._updateNodeConfigValue(node.id, control.key, filePath);
-        }
-      });
-      this._preventNodeDrag(field);
-      this._preventNodeDrag(input);
-      this._preventNodeDrag(button);
-      this._bindControlFocus(node.id, input);
-      controlsWrapper.append(input, button);
-      field.append(keyLabel, controlsWrapper);
-      return field;
-    }
-
-    if (controlKind === 'CheckBox') {
-      const field = document.createElement('label');
-      field.className = 'node-control node-control-checkbox';
       field.htmlFor = inputId;
-      const keyLabel = document.createElement('span');
-      keyLabel.className = 'node-control-key';
-      keyLabel.textContent = labelText;
-      const toggleWrapper = document.createElement('div');
-      toggleWrapper.className = 'node-checkbox-field';
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.className = 'node-control-toggle';
-      input.name = control.key;
-      input.id = inputId;
-      input.value = 'True';
-      input.checked = this._toBoolean(currentValue);
-      const stateLabel = document.createElement('span');
-      stateLabel.className = 'node-toggle-state';
-      stateLabel.textContent = input.checked ? 'True' : 'False';
-      input.addEventListener('change', () => {
-        const nextValue = input.checked ? 'True' : 'False';
-        stateLabel.textContent = nextValue;
-        this._updateNodeConfigValue(node.id, control.key, nextValue);
-      });
-      this._preventNodeDrag(field);
-      this._preventNodeDrag(input);
-      this._bindControlFocus(node.id, input);
-      toggleWrapper.append(input, stateLabel);
-      field.append(keyLabel, toggleWrapper);
-      return field;
-    }
-
-    if (controlKind === 'RadioButton') {
-      const field = document.createElement('div');
-      field.className = 'node-control node-control-radio';
-      const keyLabel = document.createElement('span');
-      keyLabel.className = 'node-control-key';
-      keyLabel.textContent = labelText;
-      const optionsWrapper = document.createElement('div');
-      optionsWrapper.className = 'node-radio-group';
-      ['True', 'False'].forEach((option) => {
-        const optionId = `${inputId}_${option.toLowerCase()}`;
-        const optionLabel = document.createElement('label');
-        optionLabel.className = 'node-radio-option';
-        optionLabel.htmlFor = optionId;
-        const radio = document.createElement('input');
-        radio.type = 'radio';
-        radio.name = control.key;
-        radio.id = optionId;
-        radio.value = option;
-        radio.checked = this._toBoolean(currentValue) === (option === 'True');
-        radio.addEventListener('change', (event) => {
-          if (event.target.checked) {
-            this._updateNodeConfigValue(node.id, control.key, option);
-          }
-        });
-        this._preventNodeDrag(optionLabel);
-        this._preventNodeDrag(radio);
-        this._bindControlFocus(node.id, radio);
-        const optionText = document.createElement('span');
-        optionText.textContent = option;
-        optionLabel.append(radio, optionText);
-        optionsWrapper.appendChild(optionLabel);
-      });
-      this._preventNodeDrag(field);
-      field.append(keyLabel, optionsWrapper);
-      return field;
-    }
-
-    if (controlKind === 'SelectBox') {
-      const options = Array.isArray(control.options)
-        ? control.options
-            .map((option) => {
-              if (typeof option === 'string') {
-                const trimmed = option.trim();
-                return trimmed ? { value: trimmed, label: trimmed } : null;
-              }
-              if (option && typeof option === 'object') {
-                const value = String(option.value ?? '').trim();
-                if (!value) return null;
-                const label =
-                  typeof option.label === 'string' && option.label.trim()
-                    ? option.label
-                    : value;
-                return { value, label };
-              }
-              return null;
-            })
-            .filter(Boolean)
-        : [];
-      if (options.length) {
-        const field = document.createElement('label');
-        field.className = 'node-control node-control-select';
-        field.htmlFor = inputId;
-        const keyLabel = document.createElement('span');
-        keyLabel.className = 'node-control-key';
-        keyLabel.textContent = labelText;
-        const select = document.createElement('select');
-        select.className = 'node-control-select-input';
-        select.name = control.key;
-        select.id = inputId;
-        options.forEach((option) => {
-          const opt = document.createElement('option');
-          opt.value = option.value;
-          opt.textContent = option.label || option.value;
-          select.appendChild(opt);
-        });
-        const normalizedCurrent = String(currentValue ?? '').trim();
-        if (options.some((option) => option.value === normalizedCurrent)) {
-          select.value = normalizedCurrent;
-        } else {
-          const fallback = options[0].value;
-          select.value = fallback;
-          this._updateNodeConfigValue(node.id, control.key, fallback, { silent: true });
-        }
-        select.addEventListener('change', (event) => {
-          this._updateNodeConfigValue(node.id, control.key, event.target.value);
-        });
-        this._preventNodeDrag(field);
-        this._preventNodeDrag(select);
-        this._bindControlFocus(node.id, select);
-        field.append(keyLabel, select);
-        return field;
-      }
-    }
-
-    const field = document.createElement('label');
-    field.className = 'node-control node-control-text';
-    field.htmlFor = inputId;
-    const keyLabel = document.createElement('span');
-    keyLabel.className = 'node-control-key';
-    keyLabel.textContent = labelText;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'node-control-input';
-    input.name = control.key;
-    input.id = inputId;
-    input.value = currentValue || '';
-    if (control.placeholder) input.placeholder = control.placeholder;
-    input.autocomplete = 'off';
-    input.addEventListener('input', (event) => {
-      this._updateNodeConfigValue(node.id, control.key, event.target.value);
+      field.append(keyLabel, input);
+      this.propertyFields.appendChild(field);
     });
-    this._preventNodeDrag(field);
-    this._preventNodeDrag(input);
-    this._bindControlFocus(node.id, input);
-    field.append(keyLabel, input);
-    return field;
-  }
 
-  _renderNodeControls(node, container) {
-    if (!container) return;
-    container.innerHTML = '';
-    if (!container.dataset.preventDrag) {
-      container.addEventListener('pointerdown', (event) => event.stopPropagation());
-      container.dataset.preventDrag = 'true';
+    if (!this.propertyFields.children.length) {
+      const empty = document.createElement('p');
+      empty.textContent = 'This node has no configurable properties.';
+      empty.className = 'empty-state';
+      this.propertyFields.appendChild(empty);
     }
-    const controls = node.definition.controls || [];
-    controls.forEach((control) => {
-      const element = this._createNodeControlElement(node, control);
-      if (element) {
-        container.appendChild(element);
-      }
-    });
+
+    const onClose = () => {
+      document.body.classList.remove('dialog-open');
+      this.propertyDialog.removeEventListener('close', onClose);
+    };
+
+    this.propertyDialog.addEventListener('close', onClose);
+    document.body.classList.add('dialog-open');
+    this.propertyDialog.showModal();
+
+    this.propertyForm.onsubmit = (event) => {
+      event.preventDefault();
+      const formData = new FormData(this.propertyForm);
+      controls.forEach((control) => {
+        node.config[control.key] = formData.get(control.key) ?? '';
+      });
+      this.propertyDialog.close();
+      this.propertyForm.reset();
+      this._markDirty();
+    };
+
+    this.propertyForm.onreset = () => {
+      this.propertyDialog.close();
+    };
   }
 
   _topologicalSort() {
