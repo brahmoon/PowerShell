@@ -156,6 +156,14 @@
                 </label>
               </div>
               <div class="field-group">
+                <label for="node-execution">ノード種別</label>
+                <select id="node-execution" name="execution">
+                  <option value="powershell">PowerShell 実行ノード</option>
+                  <option value="ui">GUI ノード</option>
+                </select>
+                <p class="field-hint">GUIノードはPowerShellスクリプトに含まれず、ブラウザUI上での操作に利用されます。</p>
+              </div>
+              <div class="field-group">
                 <label for="node-inputs">入力ポート（1行につき1件）</label>
                 <textarea id="node-inputs" name="inputs" rows="3" placeholder="InputValue"></textarea>
               </div>
@@ -203,6 +211,7 @@
         SAMPLE_NODE_TEMPLATES,
         createEmptySpec,
       } from './core/nodeLibrary.js';
+      import { BUILTIN_NODES } from './core/builtinNodes.js';
       import { NodeEditor } from './core/nodeEngine.js';
       import { loadGraph, saveGraph, clearGraph } from './storage/fileStore.js';
       import { exportScript } from './export/scriptExport.js';
@@ -315,10 +324,28 @@
         }, 1800);
       };
 
+      const cloneBuiltinDefinition = (definition) => ({
+        ...definition,
+        inputs: Array.isArray(definition.inputs) ? [...definition.inputs] : [],
+        outputs: Array.isArray(definition.outputs) ? [...definition.outputs] : [],
+        controls: Array.isArray(definition.controls)
+          ? definition.controls.map((control) => ({ ...control }))
+          : undefined,
+        initialConfig:
+          definition.initialConfig && typeof definition.initialConfig === 'object'
+            ? { ...definition.initialConfig }
+            : undefined,
+      });
+
+      const buildLibraryDefinitions = () => [
+        ...BUILTIN_NODES.map(cloneBuiltinDefinition),
+        ...specsToDefinitions(customSpecs),
+      ];
+
       const refreshLibrary = ({ persist = true } = {}) => {
         customSpecs = listCustomNodeSpecs();
         if (editor) {
-          editor.setLibrary(specsToDefinitions(customSpecs), { persist });
+          editor.setLibrary(buildLibraryDefinitions(), { persist });
         }
         renderCustomNodeList();
       };
@@ -346,6 +373,7 @@
         id: document.getElementById('node-id'),
         label: document.getElementById('node-label'),
         category: document.getElementById('node-category'),
+        execution: document.getElementById('node-execution'),
         inputs: document.getElementById('node-inputs'),
         outputs: document.getElementById('node-outputs'),
         constants: document.getElementById('node-constants'),
@@ -602,6 +630,7 @@
         if (!spec) return null;
         return {
           ...spec,
+          execution: spec?.execution === 'ui' ? 'ui' : 'powershell',
           inputs: [...(spec.inputs || [])],
           outputs: [...(spec.outputs || [])],
           constants: cloneConstants(spec.constants || []),
@@ -645,6 +674,7 @@
       const duplicateSpecWithNewId = (spec) => {
         if (!spec) return null;
         const working = cloneSpec(spec);
+        working.execution = working.execution === 'ui' ? 'ui' : 'powershell';
         const preferredBaseId = working.id || sanitizeToken(working.label).toLowerCase();
         working.id = generateUniqueNodeId(preferredBaseId);
         working.label = ensureDuplicatedLabel(working.label);
@@ -727,6 +757,7 @@
         fields.label.value = spec.label || '';
         fields.id.value = fromSample ? '' : spec.id || '';
         fields.category.value = fromSample ? 'Custom' : spec.category || 'Custom';
+        fields.execution.value = spec.execution === 'ui' ? 'ui' : 'powershell';
         fields.inputs.value = (spec.inputs || []).join('\n');
         fields.outputs.value = (spec.outputs || []).join('\n');
         fields.constants.value = formatConstants(spec.constants || []);
@@ -785,6 +816,7 @@
                 id: '',
                 label: sample.label.replace(/^Sample:\s*/i, ''),
                 category: 'Custom',
+                execution: sample.execution === 'ui' ? 'ui' : 'powershell',
                 inputs: [...(sample.inputs || [])],
                 outputs: [...(sample.outputs || [])],
                 constants: cloneConstants(sample.constants || []),
@@ -854,7 +886,7 @@
         nodeLayer,
         connectionLayer,
         nodeTemplate,
-        library: specsToDefinitions(customSpecs),
+        library: buildLibraryDefinitions(),
         onGenerateScript: exportScript,
         onRunScript: (script) =>
           runScriptWithDialog(script, { serverUrl: powerShellServerUrl }),
@@ -922,6 +954,7 @@
           id: sanitizeToken(fields.id.value.trim()) || originalId || sanitizeToken(label).toLowerCase(),
           label: label || 'Untitled node',
           category: fields.category.value.trim() || 'Custom',
+          execution: fields.execution.value === 'ui' ? 'ui' : 'powershell',
           inputs: parsePortList(fields.inputs.value),
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
@@ -967,6 +1000,7 @@
           id,
           label: label || 'Untitled node',
           category: fields.category.value.trim() || 'Custom',
+          execution: fields.execution.value === 'ui' ? 'ui' : 'powershell',
           inputs: parsePortList(fields.inputs.value),
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
