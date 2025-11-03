@@ -175,6 +175,7 @@ body.theme-dark button.secondary:focus-visible {
   flex-direction: column;
   min-height: 0;
   position: relative;
+  z-index: 6;
 }
 
 .palette {
@@ -582,6 +583,7 @@ body.theme-dark button.secondary:focus-visible {
       transparent 1px,
       transparent 48px
     );
+  z-index: 1;
 }
 
 #connection-layer {
@@ -595,6 +597,7 @@ body.theme-dark button.secondary:focus-visible {
   width: 100%;
   height: 100%;
   cursor: grab;
+  z-index: 1;
 }
 
 .node {
@@ -976,7 +979,7 @@ body.designer-open {
   box-shadow: -32px 0 64px -24px rgba(15, 23, 42, 0.3);
   transform: translateX(100%);
   transition: transform 240ms ease;
-  z-index: 30;
+  z-index: 40;
   display: flex;
   pointer-events: none;
 }
