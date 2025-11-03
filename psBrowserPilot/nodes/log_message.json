@@ -1,0 +1,23 @@
+﻿{
+    "id":  "log_message",
+    "label":  "text",
+    "category":  "Custom",
+    "execution":  "powershell",
+    "inputs":  [
+
+               ],
+    "outputs":  [
+                    "LoggedMessage"
+                ],
+    "constants":  [
+                      {
+                          "key":  "text",
+                          "type":  "TextBox",
+                          "value":  "# TODO: set value"
+                      }
+                  ],
+    "script":  "{{ config.text }}",
+    "description":  "",
+    "createdAt":  "2025-11-03T14:22:57.322Z",
+    "updatedAt":  "2025-11-03T14:22:57.322Z"
+}
