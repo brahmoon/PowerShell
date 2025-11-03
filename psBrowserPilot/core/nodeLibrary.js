@@ -468,7 +468,7 @@ export const SAMPLE_NODE_TEMPLATES = [
         'if (!controls) {',
         '  return;',
         '}',
-        'const button = controls.querySelector("[data-role=\"toggle\"]");',
+        'const button = controls.querySelector(\'[data-role="toggle"]\');',
         'const status = controls.querySelector("[data-status]");',
         'if (!button || !status) {',
         '  return;',

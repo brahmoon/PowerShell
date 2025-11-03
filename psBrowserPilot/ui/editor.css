@@ -1004,6 +1004,7 @@ body.designer-open .app-body {
 }
 
 .designer-header {
+  background-color: rgb(30 41 59 / 94%);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
