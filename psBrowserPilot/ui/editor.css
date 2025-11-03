@@ -1294,6 +1294,23 @@ body.designer-open .app-body {
   color: var(--muted);
 }
 
+.custom-node-error {
+  margin: 0.5rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: rgba(248, 113, 113, 0.12);
+  color: #b91c1c;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  border: 1px solid rgba(248, 113, 113, 0.25);
+}
+
+body.theme-dark .custom-node-error {
+  background: rgba(248, 113, 113, 0.22);
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
 .designer-empty {
   padding: 0.5rem 0.25rem;
   font-size: 0.85rem;
