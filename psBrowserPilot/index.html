@@ -237,6 +237,24 @@
       let editor;
       let powerShellServerUrl = loadServerUrl();
 
+      const sortSpecsByLabel = (specs) =>
+        [...(specs || [])].sort((a, b) => (a.label || '').localeCompare(b.label || ''));
+
+      const mergeCustomSpecList = (base = [], updates = []) => {
+        const map = new Map();
+        base.forEach((spec) => {
+          if (spec?.id) {
+            map.set(spec.id, spec);
+          }
+        });
+        updates.forEach((spec) => {
+          if (spec?.id) {
+            map.set(spec.id, spec);
+          }
+        });
+        return sortSpecsByLabel(Array.from(map.values()));
+      };
+
       const updateServerStatus = (message, state = 'info') => {
         if (!serverStatus) return;
         const classes = ['settings-note'];
@@ -355,8 +373,8 @@
       const loadCustomSpecs = async ({ silent = false } = {}) => {
         try {
           const specs = await listCustomNodeSpecs({ serverUrl: powerShellServerUrl });
-          customSpecs = specs;
-          return specs;
+          customSpecs = sortSpecsByLabel(specs);
+          return customSpecs;
         } catch (error) {
           console.error('Failed to load custom nodes', error);
           if (!silent) {
@@ -366,12 +384,16 @@
         }
       };
 
-      const refreshLibrary = async ({ persist = true, silent = false } = {}) => {
+      const refreshLibrary = async ({ persist = true, silent = false, fallbackSpecs = [] } = {}) => {
+        let nextSpecs = mergeCustomSpecList(customSpecs, fallbackSpecs);
         try {
-          await loadCustomSpecs({ silent });
+          const specs = await loadCustomSpecs({ silent });
+          nextSpecs = mergeCustomSpecList(specs, fallbackSpecs);
         } catch (error) {
           // Keep existing specs on failure.
+          nextSpecs = mergeCustomSpecList(customSpecs, fallbackSpecs);
         }
+        customSpecs = nextSpecs;
         if (editor) {
           editor.setLibrary(buildLibraryDefinitions(), { persist });
         }
@@ -721,7 +743,7 @@
         const saved = await duplicateSpecWithNewId(spec);
         if (saved) {
           showToast('ノードを複製しました。');
-          await refreshLibrary();
+          await refreshLibrary({ fallbackSpecs: [saved] });
         }
         return saved;
       };
@@ -893,7 +915,8 @@
         }
 
         if (!spec) {
-          await refreshLibrary({ persist: false, silent: true });
+          const fallbacks = fallbackSpec && fallbackSpec.id ? [fallbackSpec] : [];
+          await refreshLibrary({ persist: false, silent: true, fallbackSpecs: fallbacks });
           spec = findSpec();
         }
 
@@ -1005,7 +1028,7 @@
           return;
         }
         showToast('カスタムノードを複製しました。');
-        await refreshLibrary();
+        await refreshLibrary({ fallbackSpecs: [saved] });
         loadSpecIntoForm(saved);
       });
 
@@ -1064,7 +1087,7 @@
           return;
         }
         showToast('カスタムノードを保存しました。');
-        await refreshLibrary();
+        await refreshLibrary({ fallbackSpecs: [saved] });
         loadSpecIntoForm(saved);
       });
 
