@@ -98,6 +98,8 @@ export class NodeEditor {
     this.paletteMenu = null;
     this._paletteMenuOutsideHandler = null;
 
+    this._autoExecutionPromises = new Map();
+
     this.electronAPI = typeof window !== 'undefined' ? window.electronAPI : null;
 
     this.ctx = this.connectionLayer.getContext('2d');
@@ -1665,6 +1667,8 @@ export class NodeEditor {
           this._updateNodeConfigValue(node.id, key, value, options),
         resolveInput: (inputName, options = {}) =>
           this.resolveInputValue(node.id, inputName, options),
+        ensureAutoNodes: (portNames) => this.ensureAutoNodesForNode(node.id, portNames),
+        runAuto: (options = {}) => this.runAutoNode(node.id, options),
         toPowerShellLiteral,
       });
       if (typeof teardown === 'function') {
@@ -2321,6 +2325,129 @@ export class NodeEditor {
         displayValue: raw,
       });
     });
+  }
+
+  _collectUpstreamAutoNodes(nodeId, portNames) {
+    if (!this.nodes.has(nodeId)) {
+      return new Set();
+    }
+
+    let portSet = null;
+    if (portNames !== undefined && portNames !== null) {
+      const names = Array.isArray(portNames) ? portNames : [portNames];
+      const filtered = names.filter((name) => typeof name === 'string' && name);
+      if (filtered.length) {
+        portSet = new Set(filtered);
+      }
+    }
+
+    const seeds = this.connections
+      .filter(
+        (connection) =>
+          connection.toNode === nodeId && (!portSet || portSet.has(connection.toPort))
+      )
+      .map((connection) => connection.fromNode)
+      .filter(Boolean);
+
+    if (!seeds.length) {
+      return new Set();
+    }
+
+    const visited = new Set();
+    const autoNodes = new Set();
+    const queue = [...seeds];
+
+    while (queue.length) {
+      const currentId = queue.shift();
+      if (!currentId || visited.has(currentId)) {
+        continue;
+      }
+      visited.add(currentId);
+
+      const currentNode = this.nodes.get(currentId);
+      if (!currentNode) {
+        continue;
+      }
+
+      if (typeof currentNode.definition?.autoExecute === 'function') {
+        autoNodes.add(currentId);
+      }
+
+      this.connections.forEach((connection) => {
+        if (connection.toNode === currentId) {
+          queue.push(connection.fromNode);
+        }
+      });
+    }
+
+    return autoNodes;
+  }
+
+  async _executeAutoNode(nodeId) {
+    const node = this.nodes.get(nodeId);
+    if (!node) {
+      return;
+    }
+
+    const definition = node.definition;
+    if (!definition || typeof definition.autoExecute !== 'function') {
+      return;
+    }
+
+    if (this._autoExecutionPromises.has(nodeId)) {
+      return this._autoExecutionPromises.get(nodeId);
+    }
+
+    const promise = (async () => {
+      try {
+        const result = definition.autoExecute({
+          node,
+          editor: this,
+          updateConfig: (key, value, options = {}) =>
+            this._updateNodeConfigValue(node.id, key, value, options),
+          resolveInput: (inputName, options = {}) =>
+            this.resolveInputValue(node.id, inputName, options),
+          ensureAutoNodes: (portNames) => this.ensureAutoNodesForNode(node.id, portNames),
+          runAuto: (options = {}) => this.runAutoNode(node.id, options),
+          toPowerShellLiteral,
+        });
+        if (result && typeof result.then === 'function') {
+          await result;
+        }
+      } finally {
+        this._autoExecutionPromises.delete(nodeId);
+      }
+    })();
+
+    this._autoExecutionPromises.set(nodeId, promise);
+    return promise;
+  }
+
+  async ensureAutoNodesForNode(nodeId, portNames) {
+    const autoNodes = this._collectUpstreamAutoNodes(nodeId, portNames);
+    if (!autoNodes.size) {
+      return;
+    }
+
+    const order = this._topologicalSort();
+    for (const currentId of order) {
+      if (autoNodes.has(currentId)) {
+        await this._executeAutoNode(currentId);
+      }
+    }
+  }
+
+  async runAutoNode(nodeId, { includeUpstream = true } = {}) {
+    if (includeUpstream) {
+      await this.ensureAutoNodesForNode(nodeId);
+    }
+
+    const node = this.nodes.get(nodeId);
+    if (!node || typeof node.definition?.autoExecute !== 'function') {
+      return;
+    }
+
+    await this._executeAutoNode(nodeId);
   }
 
   resolveInputValue(nodeId, inputName, { preferRaw = false } = {}) {
