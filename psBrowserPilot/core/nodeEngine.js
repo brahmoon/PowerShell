@@ -3204,9 +3204,6 @@ export class NodeEditor {
   }
 
   _bindPointerEvents() {
-    this.nodeLayer.addEventListener('contextmenu', (event) => {
-      event.preventDefault();
-    });
     this.nodeLayer.addEventListener('pointerdown', (event) => {
       if (event.button === 1 || event.button === 2) {
         if (this._beginPan(event)) {
