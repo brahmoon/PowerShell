@@ -173,6 +173,42 @@ export class NodeEditor {
     };
   }
 
+  _isNodePositionOccupied(position) {
+    if (!position) return false;
+    const EPSILON = 1e-3;
+    for (const node of this.nodes.values()) {
+      const nodePosition = node?.position;
+      if (!nodePosition) continue;
+      if (
+        Math.abs(nodePosition.x - position.x) <= EPSILON &&
+        Math.abs(nodePosition.y - position.y) <= EPSILON
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  _findAvailableNodePositionFromScreen(screenPoint, step = 20) {
+    const baseX = typeof screenPoint?.x === 'number' ? screenPoint.x : 0;
+    const baseY = typeof screenPoint?.y === 'number' ? screenPoint.y : 0;
+    const maxAttempts = Math.max(this.nodes.size + 1, 10);
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const screen = {
+        x: baseX + step * attempt,
+        y: baseY + step * attempt,
+      };
+      const world = this._screenToWorld(screen);
+      if (!this._isNodePositionOccupied(world)) {
+        return world;
+      }
+    }
+    return this._screenToWorld({
+      x: baseX + step * maxAttempts,
+      y: baseY + step * maxAttempts,
+    });
+  }
+
   _positionNodeElement(element, position) {
     if (!element || !position) return;
     const { scale, offsetX, offsetY } = this.viewport;
@@ -596,8 +632,7 @@ export class NodeEditor {
     button.dataset.type = 'node';
     button.draggable = true;
     button.addEventListener('click', () => {
-      const screen = { x: 60, y: 60 + this.nodeCount * 40 };
-      const position = this._screenToWorld(screen);
+      const position = this._findAvailableNodePositionFromScreen({ x: 20, y: 20 });
       this._createNode(definition, position);
     });
     button.addEventListener('dragstart', (event) => this._onPaletteDragStart(event, item));
