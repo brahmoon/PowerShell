@@ -489,6 +489,8 @@
         }
       });
 
+      updateDesignerFieldVisibility();
+
       let originalId = '';
       let designerInitialized = false;
 
@@ -501,8 +503,6 @@
             section.hidden = !(target === mode || target === 'both' || target === 'shared');
           });
       };
-
-      updateDesignerFieldVisibility();
 
       const applyTheme = (theme) => {
         const mode = theme === 'dark' ? 'dark' : 'light';
