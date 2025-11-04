@@ -1,0 +1,24 @@
+﻿{
+    "id":  "excel_list_workbooks",
+    "label":  "Excel List Workbooks",
+    "category":  "Custom",
+    "execution":  "powershell",
+    "inputs":  [
+
+               ],
+    "outputs":  [
+                    "ExcelResponseJson"
+                ],
+    "constants":  [
+
+                  ],
+    "script":  "$ErrorActionPreference = \u0027Stop\u0027\n$excel = $null\n$workbooks = $null\n$result = $null\n\ntry {\n  try {\n    $excel = [Runtime.Interopservices.Marshal]::GetActiveObject(\u0027Excel.Application\u0027)\n  } catch {\n    $excel = $null\n  }\n\n  if (-not $excel) {\n    $result = [pscustomobject]@{\n      ok = $false\n      error = \u0027Excel が見つかりません。\u0027\n      workbooks = @()\n    }\n  } else {\n    $workbooks = $excel.Workbooks\n    $names = @()\n    foreach ($wb in @($workbooks)) {\n      if ($null -ne $wb) {\n        $names += [string]$wb.Name\n      }\n    }\n    $result = [pscustomobject]@{\n      ok = $true\n      workbooks = $names\n    }\n  }\n} catch {\n  $result = [pscustomobject]@{\n    ok = $false\n    error = $_.Exception.Message\n    workbooks = @()\n  }\n} finally {\n  if ($workbooks -ne $null) {\n    foreach ($wb in @($workbooks)) {\n      if ($null -ne $wb) {\n        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($wb) | Out-Null\n      }\n    }\n    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbooks) | Out-Null\n  }\n  if ($excel -ne $null) {\n    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null\n  }\n  [GC]::Collect()\n  [GC]::WaitForPendingFinalizers()\n}\n\nif ($result -eq $null) {\n  $result = [pscustomobject]@{\n    ok = $false\n    error = \u0027結果を取得できませんでした。\u0027\n    workbooks = @()\n  }\n}\n\n$json = $result | ConvertTo-Json -Compress\n{{output.ExcelResponseJson}} = $json",
+    "ui":  {
+               "markup":  "\u003cdiv class=\"custom-ui-node\"\u003e\n  \u003c!-- Build your custom node UI here --\u003e\n\u003c/div\u003e",
+               "script":  "// The context argument provides helpers like updateConfig, resolveInput, and toPowerShellLiteral.\n// Update outputs by calling updateConfig(\u0027Result\u0027, toPowerShellLiteral(\u0027value\u0027)).\nconst { controls, updateConfig, toPowerShellLiteral } = context;\nif (controls) {\n  const button = controls.querySelector(\u0027button\u0027);\n  const status = controls.querySelector(\"[data-status]\");\n  if (button \u0026\u0026 status) {\n    let active = context.node?.config?.Result__raw === \u0027true\u0027;\n    const apply = (value) =\u003e {\n      active = value;\n      status.textContent = value ? \u0027ON\u0027 : \u0027OFF\u0027;\n      button.textContent = value ? \u0027Turn OFF\u0027 : \u0027Turn ON\u0027;\n      updateConfig(\u0027Result__raw\u0027, value ? \u0027true\u0027 : \u0027false\u0027, { silent: true });\n      updateConfig(\u0027Result\u0027, toPowerShellLiteral(value ? \u0027true\u0027 : \u0027false\u0027));\n    };\n    apply(active);\n    button.addEventListener(\u0027click\u0027, () =\u003e apply(!active));\n    return () =\u003e {\n      button.replaceWith(button.cloneNode(true));\n    };\n  }\n}",
+               "style":  "/* Styles applied to the custom UI node sample */\n.custom-ui-node {\n  display: inline-flex;\n  align-items: center;\n  gap: 0.75rem;\n}\n.custom-ui-node button {\n  padding: 0.25rem 0.75rem;\n}\n.custom-ui-node [data-status] {\n  font-weight: 600;\n}"
+           },
+    "description":  "",
+    "createdAt":  "2025-11-04T01:51:40.564Z",
+    "updatedAt":  "2025-11-04T01:51:40.564Z"
+}
