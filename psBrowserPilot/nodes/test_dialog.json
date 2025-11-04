@@ -1,0 +1,24 @@
+﻿{
+    "id":  "test_dialog",
+    "label":  "test dialog",
+    "category":  "Custom",
+    "execution":  "powershell",
+    "inputs":  [
+
+               ],
+    "outputs":  [
+
+                ],
+    "constants":  [
+
+                  ],
+    "script":  "[void][System.Reflection.Assembly]::LoadWithPartialName(\"System.windows.forms\")\n\n$dialog = New-Object System.Windows.Forms.OpenFileDialog\n$dialog.Filter = \"画像ファイル(*.PNG;*.JPG;*.GIF)|*.PNG;*.JPG;*.JPEG;*.GIF\"\n$dialog.InitialDirectory = \"C:\\\"\n$dialog.Title = \"ファイルを選択してください\"\n# 複数選択を許可したい時は Multiselect を設定する\n$dialog.Multiselect = $true\n\n# ダイアログを表示\nif($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){\n    # 複数選択を許可している時は $dialog.FileNames を利用する\n    $dialog.FileName\n}",
+    "ui":  {
+               "markup":  "\u003cdiv class=\"custom-ui-node\"\u003e\n  \u003c!-- Build your custom node UI here --\u003e\n\u003c/div\u003e",
+               "script":  "// The context argument provides helpers like updateConfig, resolveInput, and toPowerShellLiteral.\n// Update outputs by calling updateConfig(\u0027Result\u0027, toPowerShellLiteral(\u0027value\u0027)).\nconst { controls, updateConfig, toPowerShellLiteral } = context;\nif (controls) {\n  const button = controls.querySelector(\u0027button\u0027);\n  const status = controls.querySelector(\"[data-status]\");\n  if (button \u0026\u0026 status) {\n    let active = context.node?.config?.Result__raw === \u0027true\u0027;\n    const apply = (value) =\u003e {\n      active = value;\n      status.textContent = value ? \u0027ON\u0027 : \u0027OFF\u0027;\n      button.textContent = value ? \u0027Turn OFF\u0027 : \u0027Turn ON\u0027;\n      updateConfig(\u0027Result__raw\u0027, value ? \u0027true\u0027 : \u0027false\u0027, { silent: true });\n      updateConfig(\u0027Result\u0027, toPowerShellLiteral(value ? \u0027true\u0027 : \u0027false\u0027));\n    };\n    apply(active);\n    button.addEventListener(\u0027click\u0027, () =\u003e apply(!active));\n    return () =\u003e {\n      button.replaceWith(button.cloneNode(true));\n    };\n  }\n}",
+               "style":  "/* Styles applied to the custom UI node sample */\n.custom-ui-node {\n  display: inline-flex;\n  align-items: center;\n  gap: 0.75rem;\n}\n.custom-ui-node button {\n  padding: 0.25rem 0.75rem;\n}\n.custom-ui-node [data-status] {\n  font-weight: 600;\n}"
+           },
+    "description":  "",
+    "createdAt":  "2025-11-04T06:15:21.412Z",
+    "updatedAt":  "2025-11-04T06:15:21.412Z"
+}
