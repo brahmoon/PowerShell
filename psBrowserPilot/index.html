@@ -120,9 +120,21 @@
               ノードの入出力ポートとスクリプトを定義し、ブラウザのストレージに保存できます。
             </p>
           </div>
-          <button type="button" id="close-designer" class="designer-close" aria-label="Close designer">
-            ×
-          </button>
+          <div class="designer-header-actions">
+            <button
+              type="button"
+              id="open-designer-help"
+              class="designer-help-button"
+              aria-label="カスタムノードのヘルプを開く"
+              aria-haspopup="dialog"
+              aria-controls="designer-help-dialog"
+            >
+              ヘルプ
+            </button>
+            <button type="button" id="close-designer" class="designer-close" aria-label="Close designer">
+              ×
+            </button>
+          </div>
         </header>
         <div class="designer-content">
           <section class="designer-sidebar">
@@ -180,14 +192,51 @@
                   placeholder="TextBox | threshold | # TODO: set value"
                 ></textarea>
               </div>
-              <div class="field-group">
-                <label for="node-script">スクリプト</label>
+              <div class="field-group" data-execution="powershell">
+                <label for="node-script">PowerShell スクリプト</label>
                 <textarea
                   id="node-script"
                   name="script"
                   class="code-area"
                   rows="12"
                   placeholder="# {{input.Value}} や {{config.threshold}} のようなプレースホルダーを使用できます。"
+                ></textarea>
+              </div>
+              <div class="field-group" data-execution="ui">
+                <label for="node-ui-markup">UI マークアップ (HTML)</label>
+                <textarea
+                  id="node-ui-markup"
+                  name="uiMarkup"
+                  rows="6"
+                  placeholder="&lt;div class=&quot;custom-ui-node&quot;&gt;...&lt;/div&gt;"
+                ></textarea>
+                <p class="field-hint">ノードのコントロール領域に挿入されるHTMLを定義します。</p>
+              </div>
+              <div class="field-group" data-execution="ui">
+                <label for="node-ui-script">UI スクリプト (JavaScript)</label>
+                <textarea
+                  id="node-ui-script"
+                  name="uiScript"
+                  class="code-area"
+                  rows="12"
+                  placeholder="// context.updateConfig(...) を使って出力値を更新します。"
+                ></textarea>
+                <p class="field-hint">
+                  <code>context</code> には
+                  <a href="#" class="designer-help-link" data-help-target="updateConfig"><code>updateConfig</code></a>・
+                  <a href="#" class="designer-help-link" data-help-target="resolveInput"><code>resolveInput</code></a>・
+                  <a href="#" class="designer-help-link" data-help-target="toPowerShellLiteral"><code>toPowerShellLiteral</code></a>
+                  などのヘルパーが含まれます。
+                </p>
+              </div>
+              <div class="field-group" data-execution="ui">
+                <label for="node-ui-style">UI スタイル (CSS)</label>
+                <textarea
+                  id="node-ui-style"
+                  name="uiStyle"
+                  class="code-area"
+                  rows="10"
+                  placeholder="/* ノード専用のスタイルを記述します */"
                 ></textarea>
               </div>
               <p id="designer-status" class="designer-status" role="status" aria-live="polite"></p>
@@ -201,6 +250,63 @@
         </div>
       </div>
     </aside>
+
+    <dialog id="designer-help-dialog" class="designer-help-dialog" aria-label="カスタムノードヘルプ">
+      <div class="designer-help-inner">
+        <header class="designer-help-header">
+          <div>
+            <h2>カスタムノードヘルプ</h2>
+            <p class="designer-help-caption">
+              カスタムGUIノードのスクリプトから利用できる <code>context</code> ヘルパーの使い方をまとめています。
+            </p>
+          </div>
+          <button type="button" id="close-designer-help" class="designer-help-close" aria-label="ヘルプを閉じる">
+            ×
+          </button>
+        </header>
+        <div class="designer-help-content">
+          <p>
+            GUIノードの <code>render</code> スクリプトには <code>context</code> オブジェクトが渡され、ノードの状態や入出力を安全に制御できます。
+            以下のヘルパーは組み合わせて利用するケースが多いので、必要に応じてセクションを参照してください。
+          </p>
+          <section class="designer-help-section" id="designer-help-updateConfig" data-help-section="updateConfig">
+            <h3><code>updateConfig(name, value, options?)</code></h3>
+            <p>ノードの構成値および出力値を更新します。引数は以下の通りです。</p>
+            <ul>
+              <li><strong><code>name</code></strong>: 更新したいキー名。出力の場合は <code>Result</code>、生値は <code>Result__raw</code> のように指定します。</li>
+              <li><strong><code>value</code></strong>: 設定する値。PowerShellへ渡す場合は <code>toPowerShellLiteral</code> の結果を使います。</li>
+              <li><strong><code>options.silent</code></strong> (省略可): <code>true</code> の場合はUI更新を抑制し、内部状態だけを変更します。</li>
+            </ul>
+            <pre><code class="language-js">const scriptValue = toPowerShellLiteral('OK');
+updateConfig('Result__raw', 'OK', { silent: true });
+updateConfig('Result', scriptValue);</code></pre>
+          </section>
+          <section class="designer-help-section" id="designer-help-resolveInput" data-help-section="resolveInput">
+            <h3><code>resolveInput(name, options?)</code></h3>
+            <p>
+              指定した入力ポートから現在の値を取得します。接続されていない場合は <code>null</code> を返します。PowerShellで扱いやすい生値を取得したい場合は
+              <code>{ preferRaw: true }</code> を指定します。
+            </p>
+            <pre><code class="language-js">const workbook = resolveInput('WorkbookName', { preferRaw: true });
+if (workbook) {
+  updateConfig('WorkbookName__raw', workbook, { silent: true });
+}</code></pre>
+          </section>
+          <section class="designer-help-section" id="designer-help-toPowerShellLiteral" data-help-section="toPowerShellLiteral">
+            <h3><code>toPowerShellLiteral(value)</code></h3>
+            <p>
+              JavaScriptの値をPowerShellスクリプト内で安全に展開できるリテラル文字列へ変換します。文字列のクォート処理や配列・数値・ブール値の表現を自動で行います。
+            </p>
+            <pre><code class="language-js">const items = ['A', 'B', 'C'];
+const literal = toPowerShellLiteral(items);
+updateConfig('SelectedItems', literal);</code></pre>
+            <p class="designer-help-note">
+              リテラル化した値を <code>updateConfig</code> で出力に設定することで、生成されたPowerShellスクリプトへそのまま埋め込まれます。
+            </p>
+          </section>
+        </div>
+      </div>
+    </dialog>
 
     <script type="module">
       import {
@@ -411,13 +517,20 @@
       const duplicateNodeBtn = document.getElementById('duplicate-node');
       const designerStatus = document.getElementById('designer-status');
       const scriptField = document.getElementById('node-script');
+      const uiMarkupField = document.getElementById('node-ui-markup');
+      const uiScriptField = document.getElementById('node-ui-script');
+      const uiStyleField = document.getElementById('node-ui-style');
       const openSettingsBtn = document.getElementById('open-settings');
       const settingsDialog = document.getElementById('settings-dialog');
       const closeSettingsBtn = document.getElementById('close-settings');
       const themeToggle = document.getElementById('theme-toggle');
+      const openDesignerHelpBtn = document.getElementById('open-designer-help');
+      const designerHelpDialog = document.getElementById('designer-help-dialog');
+      const closeDesignerHelpBtn = document.getElementById('close-designer-help');
 
       const THEME_STORAGE_KEY = 'nodeflow.theme';
       const CONSTANT_PLACEHOLDER = '# TODO: set value';
+      const DEFAULT_UI_SPEC = createEmptySpec('ui').ui;
 
       const fields = {
         id: document.getElementById('node-id'),
@@ -428,10 +541,43 @@
         outputs: document.getElementById('node-outputs'),
         constants: document.getElementById('node-constants'),
         script: scriptField,
+        uiMarkup: uiMarkupField,
+        uiScript: uiScriptField,
+        uiStyle: uiStyleField,
       };
+
+      fields.execution?.addEventListener('change', () => {
+        const mode = fields.execution.value === 'ui' ? 'ui' : 'powershell';
+        updateDesignerFieldVisibility();
+        if (mode === 'ui') {
+          const hasUiContent =
+            fields.uiMarkup.value.trim() ||
+            fields.uiScript.value.trim() ||
+            fields.uiStyle.value.trim();
+          if (!hasUiContent) {
+            fields.uiMarkup.value = DEFAULT_UI_SPEC.markup || '';
+            fields.uiScript.value = DEFAULT_UI_SPEC.script || '';
+            fields.uiStyle.value = DEFAULT_UI_SPEC.style || '';
+          }
+        } else if (!fields.script.value.trim()) {
+          fields.script.value = createEmptySpec('powershell').script;
+        }
+      });
 
       let originalId = '';
       let designerInitialized = false;
+
+      const updateDesignerFieldVisibility = () => {
+        const mode = fields.execution.value === 'ui' ? 'ui' : 'powershell';
+        designerForm
+          ?.querySelectorAll('[data-execution]')
+          .forEach((section) => {
+            const target = section.dataset.execution;
+            section.hidden = !(target === mode || target === 'both' || target === 'shared');
+          });
+      };
+
+      updateDesignerFieldVisibility();
 
       const applyTheme = (theme) => {
         const mode = theme === 'dark' ? 'dark' : 'light';
@@ -512,6 +658,103 @@
 
       settingsDialog?.addEventListener('close', () => {
         openSettingsBtn?.setAttribute('aria-expanded', 'false');
+      });
+
+      const setHelpExpanded = (expanded) => {
+        if (openDesignerHelpBtn) {
+          openDesignerHelpBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        }
+      };
+
+      setHelpExpanded(false);
+
+      const highlightHelpSection = (section) => {
+        if (!section) {
+          return;
+        }
+        const previousTabIndex = section.getAttribute('tabindex');
+        section.setAttribute('tabindex', '-1');
+        section.focus({ preventScroll: true });
+        section.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        section.classList.add('is-highlighted');
+        setTimeout(() => {
+          section.classList.remove('is-highlighted');
+          if (previousTabIndex !== null) {
+            section.setAttribute('tabindex', previousTabIndex);
+          } else {
+            section.removeAttribute('tabindex');
+          }
+        }, 1600);
+      };
+
+      const openDesignerHelp = (sectionId) => {
+        if (!designerHelpDialog) {
+          return;
+        }
+        if (typeof designerHelpDialog.showModal === 'function') {
+          if (!designerHelpDialog.open) {
+            designerHelpDialog.showModal();
+          }
+        } else {
+          designerHelpDialog.setAttribute('open', 'true');
+        }
+        setHelpExpanded(true);
+        if (sectionId) {
+          window.requestAnimationFrame(() => {
+            const target = designerHelpDialog.querySelector(
+              `[data-help-section="${sectionId}"]`
+            );
+            if (target) {
+              highlightHelpSection(target);
+            }
+          });
+        }
+      };
+
+      const closeDesignerHelp = ({ returnFocus = false } = {}) => {
+        if (!designerHelpDialog) {
+          return;
+        }
+        if (designerHelpDialog.open) {
+          designerHelpDialog.close();
+        } else {
+          designerHelpDialog.removeAttribute('open');
+        }
+        setHelpExpanded(false);
+        if (returnFocus) {
+          openDesignerHelpBtn?.focus();
+        }
+      };
+
+      openDesignerHelpBtn?.addEventListener('click', () => {
+        openDesignerHelp();
+      });
+
+      closeDesignerHelpBtn?.addEventListener('click', () => {
+        closeDesignerHelp({ returnFocus: true });
+      });
+
+      designerHelpDialog?.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        closeDesignerHelp({ returnFocus: true });
+      });
+
+      designerHelpDialog?.addEventListener('close', () => {
+        setHelpExpanded(false);
+      });
+
+      designerHelpDialog?.addEventListener('click', (event) => {
+        if (event.target === designerHelpDialog) {
+          closeDesignerHelp({ returnFocus: true });
+        }
+      });
+
+      document.querySelectorAll('.designer-help-link[data-help-target]').forEach((link) => {
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          const targetId = event.currentTarget.getAttribute('data-help-target');
+          openDesignerHelp(targetId);
+        });
       });
 
       const sanitizeToken = (value) =>
@@ -664,6 +907,18 @@
           }, [])
           .join('\n');
 
+      const cloneUiSpec = (ui) => ({
+        markup: typeof ui?.markup === 'string' ? ui.markup : '',
+        script: typeof ui?.script === 'string' ? ui.script : '',
+        style: typeof ui?.style === 'string' ? ui.style : '',
+      });
+
+      const readUiSpecFromFields = () => ({
+        markup: fields.uiMarkup.value.replace(/\r\n/g, '\n'),
+        script: fields.uiScript.value.replace(/\r\n/g, '\n'),
+        style: fields.uiStyle.value.replace(/\r\n/g, '\n'),
+      });
+
       const cloneConstants = (constants) =>
         (constants || []).map((constant) =>
           constant
@@ -685,6 +940,7 @@
           outputs: [...(spec.outputs || [])],
           constants: cloneConstants(spec.constants || []),
           script: spec.script || '',
+          ui: cloneUiSpec(spec.ui || DEFAULT_UI_SPEC),
         };
       };
 
@@ -817,6 +1073,11 @@
         fields.outputs.value = (spec.outputs || []).join('\n');
         fields.constants.value = formatConstants(spec.constants || []);
         fields.script.value = spec.script || '';
+        const uiSpec = cloneUiSpec(spec.ui || DEFAULT_UI_SPEC);
+        fields.uiMarkup.value = uiSpec.markup || '';
+        fields.uiScript.value = uiSpec.script || '';
+        fields.uiStyle.value = uiSpec.style || '';
+        updateDesignerFieldVisibility();
         designerStatus.textContent = fromSample
           ? 'サンプルノードを読み込みました。編集して保存するとカスタムノードとして登録されます。'
           : spec.id
@@ -876,6 +1137,7 @@
                 outputs: [...(sample.outputs || [])],
                 constants: cloneConstants(sample.constants || []),
                 script: sample.script,
+                ui: cloneUiSpec(sample.ui || DEFAULT_UI_SPEC),
               },
               { fromSample: true }
             )
@@ -931,6 +1193,7 @@
       };
 
       const closeDesigner = () => {
+        closeDesignerHelp({ returnFocus: false });
         designerEl.classList.remove('open');
         designerEl.setAttribute('aria-hidden', 'true');
         document.body.classList.remove('designer-open');
@@ -1007,7 +1270,8 @@
       });
 
       newNodeBtn.addEventListener('click', () => {
-        loadSpecIntoForm(createEmptySpec());
+        const mode = fields.execution.value === 'ui' ? 'ui' : 'powershell';
+        loadSpecIntoForm(createEmptySpec(mode));
         designerStatus.textContent = '新しいノードを作成しています。';
       });
 
@@ -1022,6 +1286,7 @@
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
           script: fields.script.value.replace(/\r\n/g, '\n'),
+          ui: readUiSpecFromFields(),
         };
         const saved = await duplicateSpecWithNewId(spec);
         if (!saved) {
@@ -1033,21 +1298,27 @@
       });
 
       resetFormBtn.addEventListener('click', () => {
-        loadSpecIntoForm(createEmptySpec());
+        const mode = fields.execution.value === 'ui' ? 'ui' : 'powershell';
+        loadSpecIntoForm(createEmptySpec(mode));
         designerStatus.textContent = '入力をリセットしました。';
       });
 
-      scriptField.addEventListener('keydown', (event) => {
-        if (event.key === 'Tab') {
-          event.preventDefault();
-          const { selectionStart, selectionEnd, value } = scriptField;
-          const insertion = '  ';
-          scriptField.value = `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionEnd)}`;
-          const caret = selectionStart + insertion.length;
-          scriptField.selectionStart = caret;
-          scriptField.selectionEnd = caret;
-        }
-      });
+      const attachTabHandler = (textarea) => {
+        if (!textarea) return;
+        textarea.addEventListener('keydown', (event) => {
+          if (event.key === 'Tab') {
+            event.preventDefault();
+            const { selectionStart, selectionEnd, value } = textarea;
+            const insertion = '  ';
+            textarea.value = `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionEnd)}`;
+            const caret = selectionStart + insertion.length;
+            textarea.selectionStart = caret;
+            textarea.selectionEnd = caret;
+          }
+        });
+      };
+
+      [scriptField, uiScriptField, uiStyleField, uiMarkupField].forEach(attachTabHandler);
 
       designerForm.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -1068,6 +1339,7 @@
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
           script: fields.script.value.replace(/\r\n/g, '\n'),
+          ui: readUiSpecFromFields(),
         };
         const existing = customSpecs.find((item) => item.id === spec.id);
         if (existing && existing.id !== originalId) {

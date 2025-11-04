@@ -113,8 +113,17 @@ function Invoke-PowerShellScript {
         [Parameter(Mandatory)][string]$Script
     )
 
-    $ps = [PowerShell]::Create()
+    $runspace = $null
+    $ps = $null
     try {
+        $runspace = [runspacefactory]::CreateRunspace()
+        $runspace.ApartmentState = [Threading.ApartmentState]::STA
+        $runspace.ThreadOptions = [System.Management.Automation.Runspaces.PSThreadOptions]::ReuseThread
+        $runspace.Open()
+
+        $ps = [PowerShell]::Create()
+        $ps.Runspace = $runspace
+
         $null = $ps.AddScript($Script)
         $null = $ps.AddCommand('Out-String')
 
@@ -139,7 +148,13 @@ function Invoke-PowerShellScript {
             errors = @($_.Exception.Message)
         }
     } finally {
-        $ps.Dispose()
+        if ($ps -ne $null) {
+            $ps.Dispose()
+        }
+        if ($runspace -ne $null) {
+            $runspace.Close()
+            $runspace.Dispose()
+        }
     }
 }
 
