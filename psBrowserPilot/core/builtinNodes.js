@@ -1,10 +1,4 @@
-import {
-  DEFAULT_SERVER_URL,
-  loadServerUrl,
-  normalizeServerUrl,
-} from '../export/scriptRunner.js';
-
-const RUN_SCRIPT_PATH = '/runScript';
+import { ColorHelper } from './nodeHelpers/index.js';
 
 const RELEASE_COM_OBJECTS_SNIPPET = `
 if ($sheet -ne $null) {
@@ -20,18 +14,7 @@ if ($excel -ne $null) {
 [GC]::WaitForPendingFinalizers()
 `;
 
-const COLOR_HELPERS = `
-function Convert-OleToHex {
-  param([Parameter()][object]$Ole)
-  if ($null -eq $Ole) { return $null }
-  try {
-    $color = [System.Drawing.ColorTranslator]::FromOle([int]$Ole)
-    return ('#{0:X2}{1:X2}{2:X2}' -f $color.R, $color.G, $color.B)
-  } catch {
-    return $null
-  }
-}
-`;
+const COLOR_HELPERS = ColorHelper.COLOR_HELPERS_SCRIPT;
 
 const LIST_WORKBOOKS_SCRIPT = `
 $ErrorActionPreference = 'Stop'
@@ -355,53 +338,6 @@ if ($result -eq $null) {
 $result | ConvertTo-Json -Compress
 `;
 
-const getRunScriptEndpoint = () => {
-  const base = normalizeServerUrl(loadServerUrl()) || DEFAULT_SERVER_URL;
-  return `${base.replace(/\/+$/, '')}${RUN_SCRIPT_PATH}`;
-};
-
-const invokePowerShell = async (script) => {
-  const endpoint = getRunScriptEndpoint();
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ script }),
-  });
-
-  let payload;
-  try {
-    payload = await response.json();
-  } catch (error) {
-    throw new Error('PowerShell サーバーから無効な応答を受信しました。');
-  }
-
-  if (!response.ok) {
-    const message = payload?.error || `HTTP ${response.status}`;
-    throw new Error(message);
-  }
-
-  if (payload?.ok === false) {
-    const message = Array.isArray(payload?.errors) && payload.errors.length
-      ? payload.errors.join('\n')
-      : 'PowerShell がエラーを返しました。';
-    throw new Error(message);
-  }
-
-  return typeof payload?.output === 'string' ? payload.output.trim() : '';
-};
-
-const requestExcelJson = async (script) => {
-  const output = await invokePowerShell(script);
-  if (!output) {
-    return null;
-  }
-  try {
-    return JSON.parse(output);
-  } catch (error) {
-    throw new Error('PowerShell の応答を解析できませんでした。');
-  }
-};
-
 const createExcelWorkbookSelector = () => ({
   id: 'ui_excel_workbook_selector',
   label: 'Excel Workbook Selector',
@@ -417,7 +353,7 @@ const createExcelWorkbookSelector = () => ({
     selectedWorkbookLabel: '',
   },
   script: () => '',
-  render: ({ node, controls, updateConfig, toPowerShellLiteral: literal }) => {
+  render: ({ node, controls, updateConfig, toPowerShellLiteral: literal, helpers }) => {
     if (!controls) {
       return null;
     }
@@ -442,11 +378,18 @@ const createExcelWorkbookSelector = () => ({
     controls.appendChild(wrapper);
 
     let disposed = false;
+    const statusController = helpers?.NodeUI?.bindStatus(status);
+    const bridge = helpers?.NodeBridge;
+    const logger = helpers?.NodeLogger || console;
 
     const setStatus = (message, type = '') => {
       if (disposed) return;
-      status.textContent = message || '';
-      status.dataset.state = type;
+      if (statusController?.set) {
+        statusController.set(message || '', type);
+      } else {
+        status.textContent = message || '';
+        status.dataset.state = type;
+      }
     };
 
     const applySelection = (workbookName) => {
@@ -486,7 +429,10 @@ const createExcelWorkbookSelector = () => ({
       setStatus('Excelのブックを取得中…', 'pending');
       refreshBtn.disabled = true;
       try {
-        const data = await requestExcelJson(LIST_WORKBOOKS_SCRIPT);
+        if (!bridge?.requestJson) {
+          throw new Error('PowerShell ブリッジが利用できません。');
+        }
+        const data = await bridge.requestJson(LIST_WORKBOOKS_SCRIPT);
         if (disposed) return;
         if (!data?.ok) {
           throw new Error(data?.error || 'ブック情報を取得できませんでした');
@@ -501,7 +447,9 @@ const createExcelWorkbookSelector = () => ({
       } catch (error) {
         if (!disposed) {
           populateOptions([], { preserveSelection: false });
-          setStatus(`取得に失敗しました: ${error.message}`, 'error');
+          const message = error?.message || 'ブック情報を取得できませんでした';
+          setStatus(`取得に失敗しました: ${message}`, 'error');
+          logger?.error?.('Workbook fetch failed', error);
         }
       } finally {
         if (!disposed) {
@@ -542,6 +490,7 @@ const createExcelWorkbookSelector = () => ({
 
     return () => {
       disposed = true;
+      statusController?.dispose?.();
     };
   },
 });
@@ -575,6 +524,7 @@ const createExcelSelectionInspector = () => ({
     updateConfig,
     resolveInput,
     toPowerShellLiteral: literal,
+    helpers,
   }) => {
     if (!controls) {
       return null;
@@ -612,11 +562,18 @@ const createExcelSelectionInspector = () => ({
     controls.appendChild(wrapper);
 
     let disposed = false;
+    const statusController = helpers?.NodeUI?.bindStatus(status);
+    const bridge = helpers?.NodeBridge;
+    const logger = helpers?.NodeLogger || console;
 
     const setStatus = (message, type = '') => {
       if (disposed) return;
-      status.textContent = message || '';
-      status.dataset.state = type;
+      if (statusController?.set) {
+        statusController.set(message || '', type);
+      } else {
+        status.textContent = message || '';
+        status.dataset.state = type;
+      }
     };
 
     const setOutput = (key, rawValue) => {
@@ -647,8 +604,11 @@ const createExcelSelectionInspector = () => ({
       button.disabled = true;
       setStatus('選択セル情報を取得中…', 'pending');
       try {
+        if (!bridge?.requestJson) {
+          throw new Error('PowerShell ブリッジが利用できません。');
+        }
         const script = buildSelectionInspectorScript(workbook ? literal(workbook) : null);
-        const data = await requestExcelJson(script);
+        const data = await bridge.requestJson(script);
         if (disposed) return;
         if (!data?.ok) {
           throw new Error(data?.error || '情報を取得できませんでした');
@@ -683,7 +643,9 @@ const createExcelSelectionInspector = () => ({
         }
       } catch (error) {
         if (!disposed) {
-          setStatus(`取得に失敗しました: ${error.message}`, 'error');
+          const message = error?.message || '情報を取得できませんでした';
+          setStatus(`取得に失敗しました: ${message}`, 'error');
+          logger?.error?.('Selection fetch failed', error);
         }
       } finally {
         if (!disposed) {
@@ -712,6 +674,7 @@ const createExcelSelectionInspector = () => ({
 
     return () => {
       disposed = true;
+      statusController?.dispose?.();
     };
   },
 });
@@ -738,7 +701,7 @@ const createExcelGetActiveCellNode = () => ({
     lastUpdated: '',
   },
   script: () => '',
-  render: ({ node, controls, runAuto }) => {
+  render: ({ node, controls, runAuto, helpers }) => {
     if (!controls) {
       return null;
     }
@@ -778,11 +741,17 @@ const createExcelGetActiveCellNode = () => ({
     controls.appendChild(wrapper);
 
     let disposed = false;
+    const statusController = helpers?.NodeUI?.bindStatus(status);
+    const logger = helpers?.NodeLogger || console;
 
     const setStatus = (message, type = '') => {
       if (disposed) return;
-      status.textContent = message || '';
-      status.dataset.state = type;
+      if (statusController?.set) {
+        statusController.set(message || '', type);
+      } else {
+        status.textContent = message || '';
+        status.dataset.state = type;
+      }
     };
 
     const formatTextValue = (value) => {
@@ -871,6 +840,7 @@ const createExcelGetActiveCellNode = () => ({
         }
       } catch (error) {
         setStatus(`取得に失敗しました: ${error.message}`, 'error');
+        logger?.error?.('Active cell fetch failed', error);
       } finally {
         button.disabled = false;
       }
@@ -883,11 +853,14 @@ const createExcelGetActiveCellNode = () => ({
       if (node.runtime?.activeCell) {
         delete node.runtime.activeCell;
       }
+      statusController?.dispose?.();
     };
   },
-  autoExecute: async ({ node, updateConfig, resolveInput, toPowerShellLiteral }) => {
+  autoExecute: async ({ node, updateConfig, resolveInput, toPowerShellLiteral, helpers }) => {
     const runtime = node.runtime?.activeCell;
     runtime?.setStatus?.('アクティブセルを取得中…', 'pending');
+    const bridge = helpers?.NodeBridge;
+    const logger = helpers?.NodeLogger || console;
 
     let workbookRaw = '';
     if (typeof resolveInput === 'function') {
@@ -910,12 +883,16 @@ const createExcelGetActiveCellNode = () => ({
 
     let data;
     try {
-      data = await requestExcelJson(buildActiveCellScript(workbookLiteral));
+      if (!bridge?.requestJson) {
+        throw new Error('PowerShell ブリッジが利用できません。');
+      }
+      data = await bridge.requestJson(buildActiveCellScript(workbookLiteral));
     } catch (error) {
       const message = error?.message || 'アクティブセル情報を取得できませんでした。';
       updateConfig('StatusMessage', message, { silent: true });
       updateConfig('StatusState', 'error', { silent: true });
       runtime?.setStatus?.(`取得に失敗しました: ${message}`, 'error');
+      logger?.error?.('Active cell auto-execute failed', error);
       throw error;
     }
 

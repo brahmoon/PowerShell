@@ -1,24 +1,20 @@
-﻿{
-    "id":  "test_ui",
-    "label":  "Sample UI: Toggle Output",
-    "category":  "Custom",
-    "execution":  "ui",
-    "inputs":  [
-
-               ],
-    "outputs":  [
-                    "IsEnabled"
-                ],
-    "constants":  [
-
-                  ],
-    "script":  "",
-    "ui":  {
-               "markup":  "\u003cdiv class=\"custom-ui-node sample-toggle-node\"\u003e\n  \u003cbutton type=\"button\" data-role=\"toggle\"\u003e有効にする\u003c/button\u003e\n  \u003cspan data-status\u003eOFF\u003c/span\u003e\n\u003c/div\u003e",
-               "script":  "const { node, controls, updateConfig, toPowerShellLiteral } = context;\nif (!controls) {\n  return;\n}\nconst button = controls.querySelector(\u0027[data-role=\"toggle\"]\u0027);\nconst status = controls.querySelector(\"[data-status]\");\nif (!button || !status) {\n  return;\n}\nlet current = (node?.config?.IsEnabled__raw || \u0027\u0027).toLowerCase() === \u0027true\u0027;\nconst renderState = (value) =\u003e {\n  status.textContent = value ? \u0027ON\u0027 : \u0027OFF\u0027;\n  button.textContent = value ? \u0027無効にする\u0027 : \u0027有効にする\u0027;\n  updateConfig(\u0027IsEnabled__raw\u0027, value ? \u0027true\u0027 : \u0027false\u0027, { silent: true });\n  updateConfig(\u0027IsEnabled\u0027, toPowerShellLiteral(value ? \u0027true\u0027 : \u0027false\u0027));\n};\nrenderState(current);\nconst handleClick = () =\u003e {\n  current = !current;\n  renderState(current);\n};\nbutton.addEventListener(\u0027click\u0027, handleClick);\nreturn () =\u003e button.removeEventListener(\u0027click\u0027, handleClick);",
-               "style":  ".sample-toggle-node {\n  display: inline-flex;\n  align-items: center;\n  gap: 0.75rem;\n  background: rgba(59, 130, 246, 0.12);\n  padding: 0.5rem 0.75rem;\n  border-radius: 0.75rem;\n}\n.sample-toggle-node button {\n  padding: 0.3rem 0.9rem;\n  border-radius: 999px;\n  border: none;\n  background: #2563eb;\n  color: #fff;\n  cursor: pointer;\n}\n.sample-toggle-node button:hover {\n  background: #1d4ed8;\n}\n.sample-toggle-node [data-status] {\n  font-weight: 600;\n  letter-spacing: 0.05em;\n}"
-           },
-    "description":  "",
-    "createdAt":  "2025-11-03T15:49:27.480Z",
-    "updatedAt":  "2025-11-03T15:52:06.686Z"
+{
+  "id": "test_ui",
+  "label": "Sample UI: Toggle Output",
+  "category": "Custom",
+  "execution": "ui",
+  "inputs": [],
+  "outputs": [
+    "IsEnabled"
+  ],
+  "constants": [],
+  "script": "",
+  "ui": {
+    "markup": "<div class=\"custom-ui-node sample-toggle-node\">\n  <button type=\"button\" data-role=\"toggle\">有効にする</button>\n  <span data-status>OFF</span>\n</div>",
+    "script": "const { node, controls, updateConfig, toPowerShellLiteral, helpers } = context;\nif (!controls) return;\n\nconst button = controls.querySelector('[data-role=\"toggle\"]');\nconst statusEl = controls.querySelector('[data-status]');\nif (!button || !statusEl) return;\n\nconst status = helpers?.NodeUI?.bindStatus(statusEl);\nlet current = (node?.config?.IsEnabled__raw || '').toLowerCase() === 'true';\n\nconst apply = (value) => {\n  current = Boolean(value);\n  const label = current ? 'ON' : 'OFF';\n  button.textContent = current ? 'Turn OFF' : 'Turn ON';\n  status?.set?.(`Status: ${label}`, current ? 'success' : 'info');\n  updateConfig('IsEnabled__raw', current ? 'true' : 'false', { silent: true });\n  updateConfig('IsEnabled', toPowerShellLiteral(current ? 'true' : 'false'));\n};\n\nbutton.addEventListener('click', (event) => {\n  event.preventDefault();\n  apply(!current);\n});\n\napply(current);\n\nreturn () => {\n  status?.dispose?.();\n};",
+    "style": ".sample-toggle-node {\n  display: inline-flex;\n  align-items: center;\n  gap: 0.75rem;\n  background: rgba(59, 130, 246, 0.12);\n  padding: 0.5rem 0.75rem;\n  border-radius: 0.75rem;\n}\n.sample-toggle-node button {\n  padding: 0.3rem 0.9rem;\n  border-radius: 999px;\n  border: none;\n  background: #2563eb;\n  color: #fff;\n  cursor: pointer;\n}\n.sample-toggle-node button:hover {\n  background: #1d4ed8;\n}\n.sample-toggle-node [data-status] {\n  font-weight: 600;\n  letter-spacing: 0.05em;\n}"
+  },
+  "description": "",
+  "createdAt": "2025-11-03T15:49:27.480Z",
+  "updatedAt": "2025-11-03T15:52:06.686Z"
 }

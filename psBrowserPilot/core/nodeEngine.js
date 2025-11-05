@@ -1,5 +1,6 @@
 import { wrapPowerShellScript } from './psTemplate.js';
 import { toPowerShellLiteral } from './guiUtils.js';
+import { createHelperContext } from './nodeHelpers/index.js';
 
 const HANDLE_RADIUS = 6;
 const PALETTE_STORAGE_KEY = 'nodeflow.palette.v1';
@@ -1658,7 +1659,7 @@ export class NodeEditor {
     }
 
     if (typeof node.definition.render === 'function') {
-      const teardown = node.definition.render({
+      const baseContext = {
         node,
         element: el,
         controls: controlsContainer,
@@ -1670,6 +1671,11 @@ export class NodeEditor {
         ensureAutoNodes: (portNames) => this.ensureAutoNodesForNode(node.id, portNames),
         runAuto: (options = {}) => this.runAutoNode(node.id, options),
         toPowerShellLiteral,
+      };
+      const helperContext = createHelperContext(baseContext);
+      const teardown = node.definition.render({
+        ...baseContext,
+        helpers: helperContext,
       });
       if (typeof teardown === 'function') {
         node.teardown = () => {
@@ -2400,7 +2406,7 @@ export class NodeEditor {
 
     const promise = (async () => {
       try {
-        const result = definition.autoExecute({
+        const baseContext = {
           node,
           editor: this,
           updateConfig: (key, value, options = {}) =>
@@ -2410,6 +2416,11 @@ export class NodeEditor {
           ensureAutoNodes: (portNames) => this.ensureAutoNodesForNode(node.id, portNames),
           runAuto: (options = {}) => this.runAutoNode(node.id, options),
           toPowerShellLiteral,
+        };
+        const helperContext = createHelperContext(baseContext);
+        const result = definition.autoExecute({
+          ...baseContext,
+          helpers: helperContext,
         });
         if (result && typeof result.then === 'function') {
           await result;
