@@ -2450,31 +2450,6 @@ export class NodeEditor {
     await this._executeAutoNode(nodeId);
   }
 
-  async _runChainExecutions() {
-    if (!this.nodes.size) {
-      return;
-    }
-
-    const chainNodes = [];
-    this.nodes.forEach((node, nodeId) => {
-      if (node?.definition?.chainExecution && typeof node.definition.autoExecute === 'function') {
-        chainNodes.push(nodeId);
-      }
-    });
-
-    if (!chainNodes.length) {
-      return;
-    }
-
-    const targetIds = new Set(chainNodes);
-    const order = this._topologicalSort();
-    for (const nodeId of order) {
-      if (targetIds.has(nodeId)) {
-        await this.runAutoNode(nodeId, { includeUpstream: true });
-      }
-    }
-  }
-
   resolveInputValue(nodeId, inputName, { preferRaw = false } = {}) {
     const node = this.nodes.get(nodeId);
     if (!node) return '';
@@ -3124,36 +3099,26 @@ export class NodeEditor {
     return wrapPowerShellScript(lines.join('\n\n'));
   }
 
-  async exportScript() {
+  exportScript() {
     try {
-      await this._runChainExecutions();
       const script = this.generateScript();
-      if (typeof this.onGenerateScript === 'function') {
-        const result = this.onGenerateScript(script);
-        if (result && typeof result.then === 'function') {
-          await result;
-        }
-      }
+      this.onGenerateScript(script);
     } catch (error) {
-      alert(error?.message || String(error));
+      alert(error.message);
     }
   }
 
-  async runScript() {
+  runScript() {
     if (typeof this.onRunScript !== 'function') {
-      await this.exportScript();
+      this.exportScript();
       return;
     }
 
     try {
-      await this._runChainExecutions();
       const script = this.generateScript();
-      const result = this.onRunScript(script);
-      if (result && typeof result.then === 'function') {
-        await result;
-      }
+      this.onRunScript(script);
     } catch (error) {
-      alert(error?.message || String(error));
+      alert(error.message);
     }
   }
 
