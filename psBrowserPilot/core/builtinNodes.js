@@ -8,13 +8,13 @@ const RUN_SCRIPT_PATH = '/runScript';
 
 const RELEASE_COM_OBJECTS_SNIPPET = `
 if ($sheet -ne $null) {
-  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($sheet) | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($sheet) | Out-Null
 }
 if ($workbook -ne $null) {
-  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbook) | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook) | Out-Null
 }
 if ($excel -ne $null) {
-  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
+  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
 }
 [GC]::Collect()
 [GC]::WaitForPendingFinalizers()
@@ -43,7 +43,7 @@ $result = $null
 
 try {
   try {
-    $excel = [Runtime.Interopservices.Marshal]::GetActiveObject('Excel.Application')
+    $excel = [System.Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application')
   } catch {
     $excel = $null
   }
@@ -57,9 +57,22 @@ try {
   } else {
     $workbooks = $excel.Workbooks
     $names = @()
-    foreach ($wb in @($workbooks)) {
+    $count = 0
+    try {
+      $count = [int]$workbooks.Count
+    } catch {
+      $count = 0
+    }
+    for ($i = 1; $i -le $count; $i++) {
+      $wb = $null
+      try {
+        $wb = $workbooks.Item($i)
+      } catch {
+        $wb = $null
+      }
       if ($null -ne $wb) {
         $names += [string]$wb.Name
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wb) | Out-Null
       }
     }
     $result = [pscustomobject]@{
@@ -75,12 +88,7 @@ try {
   }
 } finally {
   if ($workbooks -ne $null) {
-    foreach ($wb in @($workbooks)) {
-      if ($null -ne $wb) {
-        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($wb) | Out-Null
-      }
-    }
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbooks) | Out-Null
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbooks) | Out-Null
   }
   ${RELEASE_COM_OBJECTS_SNIPPET}
 }
@@ -111,7 +119,7 @@ $result = $null
 
 try {
   try {
-    $excel = [Runtime.Interopservices.Marshal]::GetActiveObject('Excel.Application')
+    $excel = [System.Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application')
   } catch {
     $excel = $null
   }
@@ -128,13 +136,25 @@ try {
     if ([string]::IsNullOrWhiteSpace($targetName)) {
       $workbook = $excel.ActiveWorkbook
     } else {
-      foreach ($candidate in @($workbooks)) {
+      $count = 0
+      try {
+        $count = [int]$workbooks.Count
+      } catch {
+        $count = 0
+      }
+      for ($i = 1; $i -le $count; $i++) {
+        $candidate = $null
+        try {
+          $candidate = $workbooks.Item($i)
+        } catch {
+          $candidate = $null
+        }
         if ($null -eq $candidate) { continue }
         if ($candidate.Name -eq $targetName) {
           $workbook = $candidate
           break
         }
-        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($candidate) | Out-Null
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($candidate) | Out-Null
       }
     }
 
@@ -193,10 +213,10 @@ try {
   }
 } finally {
   if ($selection -ne $null) {
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($selection) | Out-Null
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($selection) | Out-Null
   }
   if ($workbooks -ne $null) {
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbooks) | Out-Null
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbooks) | Out-Null
   }
   ${RELEASE_COM_OBJECTS_SNIPPET}
 }
@@ -230,7 +250,7 @@ $mergeCount = $null
 
 try {
   try {
-    $excel = [Runtime.Interopservices.Marshal]::GetActiveObject('Excel.Application')
+    $excel = [System.Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application')
   } catch {
     $excel = $null
   }
@@ -247,13 +267,25 @@ try {
     if ([string]::IsNullOrWhiteSpace($targetName)) {
       $workbook = $excel.ActiveWorkbook
     } else {
-      foreach ($candidate in @($workbooks)) {
+      $count = 0
+      try {
+        $count = [int]$workbooks.Count
+      } catch {
+        $count = 0
+      }
+      for ($i = 1; $i -le $count; $i++) {
+        $candidate = $null
+        try {
+          $candidate = $workbooks.Item($i)
+        } catch {
+          $candidate = $null
+        }
         if ($null -eq $candidate) { continue }
         if ($candidate.Name -eq $targetName) {
           $workbook = $candidate
           break
         }
-        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($candidate) | Out-Null
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($candidate) | Out-Null
       }
     }
 
@@ -335,12 +367,12 @@ try {
     error = $_.Exception.Message
   }
 } finally {
-  if ($mergeArea -ne $null) { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($mergeArea) | Out-Null }
-  if ($cell -ne $null) { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($cell) | Out-Null }
-  if ($sheet -ne $null) { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($sheet) | Out-Null }
-  if ($workbooks -ne $null) { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbooks) | Out-Null }
-  if ($workbook -ne $null) { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbook) | Out-Null }
-  if ($excel -ne $null) { [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null }
+  if ($mergeArea -ne $null) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($mergeArea) | Out-Null }
+  if ($cell -ne $null) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($cell) | Out-Null }
+  if ($sheet -ne $null) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($sheet) | Out-Null }
+  if ($workbooks -ne $null) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbooks) | Out-Null }
+  if ($workbook -ne $null) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook) | Out-Null }
+  if ($excel -ne $null) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null }
   [GC]::Collect()
   [GC]::WaitForPendingFinalizers()
 }
@@ -553,6 +585,7 @@ const createExcelSelectionInspector = () => ({
   execution: 'ui',
   inputs: ['WorkbookName'],
   outputs: ['SelectionAddress', 'Sheet', 'SelectionText', 'FontColorHex', 'InteriorColorHex'],
+  chainExecution: true,
   initialConfig: {
     WorkbookName__raw: '',
     SelectionAddress: '',
@@ -575,6 +608,7 @@ const createExcelSelectionInspector = () => ({
     updateConfig,
     resolveInput,
     toPowerShellLiteral: literal,
+    runAuto,
   }) => {
     if (!controls) {
       return null;
@@ -616,13 +650,11 @@ const createExcelSelectionInspector = () => ({
     const setStatus = (message, type = '') => {
       if (disposed) return;
       status.textContent = message || '';
-      status.dataset.state = type;
-    };
-
-    const setOutput = (key, rawValue) => {
-      const raw = rawValue ?? '';
-      updateConfig(`${key}__raw`, raw, { silent: true });
-      updateConfig(key, raw ? literal(raw) : '', { silent: false });
+      if (type) {
+        status.dataset.state = type;
+      } else if (status.dataset.state) {
+        delete status.dataset.state;
+      }
     };
 
     const updateDisplay = (data) => {
@@ -641,78 +673,152 @@ const createExcelSelectionInspector = () => ({
       });
     };
 
-    const fetchSelection = async () => {
-      const workbook =
-        resolveInput('WorkbookName', { preferRaw: true }) || node.config.WorkbookName__raw;
-      button.disabled = true;
-      setStatus('選択セル情報を取得中…', 'pending');
-      try {
-        const script = buildSelectionInspectorScript(workbook ? literal(workbook) : null);
-        const data = await requestExcelJson(script);
-        if (disposed) return;
-        if (!data?.ok) {
-          throw new Error(data?.error || '情報を取得できませんでした');
-        }
-        const address = data.address || '';
-        const value = data.value ?? '';
-        const fontHex = data.font_color?.hex || '';
-        const interiorHex = data.interior_color?.hex || '';
-        const resolvedWorkbook = data.workbook || workbook || '';
-
-        setOutput('SelectionAddress', address);
-        setOutput('Sheet', data.sheet || '');
-        setOutput('SelectionText', value);
-        setOutput('FontColorHex', fontHex);
-        setOutput('InteriorColorHex', interiorHex);
-        updateConfig('WorkbookName__raw', resolvedWorkbook, { silent: true });
-        updateConfig('WorkbookName', resolvedWorkbook ? literal(resolvedWorkbook) : '', {
-          silent: true,
-        });
-        updateConfig('lastWorkbook', resolvedWorkbook, { silent: true });
-        updateConfig('lastSheet', data.sheet || '', { silent: true });
-        applyStoredResult();
-        const workbookLabel = data.workbook || workbook;
-        const sheetLabel = data.sheet ? `${data.sheet}` : '';
-        const suffix = sheetLabel ? `${sheetLabel} - ${address}` : address;
-        if (workbookLabel && suffix) {
-          setStatus(`${workbookLabel}: ${suffix}`, 'success');
-        } else if (suffix) {
-          setStatus(suffix, 'success');
-        } else {
-          setStatus('選択情報を更新しました。', 'success');
-        }
-      } catch (error) {
-        if (!disposed) {
-          setStatus(`取得に失敗しました: ${error.message}`, 'error');
-        }
-      } finally {
-        if (!disposed) {
-          button.disabled = false;
-        }
-      }
-    };
-
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      fetchSelection();
-    });
-
-    applyStoredResult();
-    if (node.config.lastWorkbook || node.config.lastSheet) {
+    const syncStatusFromConfig = () => {
       const workbookLabel = node.config.lastWorkbook || '';
       const sheetLabel = node.config.lastSheet || '';
       const address = node.config.SelectionAddress__raw || '';
       const summary = [workbookLabel, sheetLabel, address].filter(Boolean).join(' / ');
       if (summary) {
         setStatus(`前回の結果: ${summary}`, 'info');
+      } else {
+        setStatus('Excelの選択範囲情報を取得できます。', 'info');
       }
-    } else {
-      setStatus('Excelの選択範囲情報を取得できます。', 'info');
-    }
+    };
+
+    const runtime = node.runtime || (node.runtime = {});
+    const runtimeState =
+      (runtime.selectionInspector = {
+        beginAuto: (message) => {
+          if (disposed) return;
+          button.disabled = true;
+          setStatus(message || '選択セル情報を取得中…', 'pending');
+        },
+        finishAuto: () => {
+          if (disposed) return;
+          button.disabled = false;
+        },
+        setStatus: (message, state = '') => setStatus(message, state),
+        applyResult: (data) => {
+          if (disposed) return;
+          updateDisplay(data || {});
+        },
+        syncStatus: syncStatusFromConfig,
+      });
+
+    button.addEventListener('click', async (event) => {
+      event.preventDefault();
+      runtimeState.beginAuto?.('選択セル情報を取得中…');
+      try {
+        if (typeof runAuto === 'function') {
+          await runAuto({ includeUpstream: true });
+        }
+      } catch (error) {
+        runtimeState.setStatus?.(`取得に失敗しました: ${error.message}`, 'error');
+      } finally {
+        runtimeState.finishAuto?.();
+      }
+    });
+
+    applyStoredResult();
+    runtimeState.syncStatus?.();
 
     return () => {
       disposed = true;
+      if (node.runtime?.selectionInspector) {
+        delete node.runtime.selectionInspector;
+      }
     };
+  },
+  autoExecute: async ({ node, updateConfig, resolveInput, toPowerShellLiteral }) => {
+    const runtime = node.runtime?.selectionInspector;
+    runtime?.beginAuto?.('選択セル情報を取得中…');
+
+    const setOutput = (key, rawValue) => {
+      const raw = rawValue ?? '';
+      updateConfig(`${key}__raw`, raw, { silent: true });
+      updateConfig(key, raw ? toPowerShellLiteral(raw) : '', { silent: false });
+    };
+
+    let workbookRaw = '';
+    if (typeof resolveInput === 'function') {
+      try {
+        workbookRaw =
+          resolveInput('WorkbookName', { preferRaw: true }) ||
+          resolveInput('WorkbookName', { preferRaw: false });
+      } catch (error) {
+        workbookRaw = '';
+      }
+    }
+    if (!workbookRaw && typeof node.config.WorkbookName__raw === 'string') {
+      workbookRaw = node.config.WorkbookName__raw;
+    }
+    if (typeof workbookRaw !== 'string') {
+      workbookRaw = '';
+    }
+
+    const trimmedWorkbook = workbookRaw.trim();
+    const workbookLiteral = trimmedWorkbook ? toPowerShellLiteral(trimmedWorkbook) : null;
+
+    let data;
+    try {
+      const script = buildSelectionInspectorScript(workbookLiteral);
+      data = await requestExcelJson(script);
+    } catch (error) {
+      runtime?.setStatus?.(`取得に失敗しました: ${error.message}`, 'error');
+      runtime?.finishAuto?.();
+      throw error;
+    }
+
+    if (!data?.ok) {
+      const message = data?.error || '情報を取得できませんでした。';
+      runtime?.setStatus?.(`取得に失敗しました: ${message}`, 'error');
+      runtime?.finishAuto?.();
+      throw new Error(message);
+    }
+
+    const address = data.address || '';
+    const value = data.value ?? '';
+    const fontHex = data.font_color?.hex || '';
+    const interiorHex = data.interior_color?.hex || '';
+    const sheetName = data.sheet || '';
+    const resolvedWorkbook = data.workbook || trimmedWorkbook || '';
+
+    setOutput('SelectionAddress', address);
+    setOutput('Sheet', sheetName);
+    setOutput('SelectionText', value);
+    setOutput('FontColorHex', fontHex);
+    setOutput('InteriorColorHex', interiorHex);
+
+    updateConfig('WorkbookName__raw', resolvedWorkbook, { silent: true });
+    updateConfig('WorkbookName', resolvedWorkbook ? toPowerShellLiteral(resolvedWorkbook) : '', {
+      silent: true,
+    });
+    updateConfig('Workbook__raw', resolvedWorkbook, { silent: true });
+    updateConfig('Workbook', resolvedWorkbook ? toPowerShellLiteral(resolvedWorkbook) : '', {
+      silent: true,
+    });
+    updateConfig('lastWorkbook', resolvedWorkbook, { silent: true });
+    updateConfig('lastSheet', sheetName, { silent: true });
+
+    runtime?.applyResult?.({
+      address,
+      value,
+      fontHex,
+      interiorHex,
+    });
+
+    const workbookLabel = resolvedWorkbook;
+    const sheetLabel = sheetName || '';
+    const suffix = sheetLabel ? `${sheetLabel} - ${address}` : address;
+    if (workbookLabel && suffix) {
+      runtime?.setStatus?.(`${workbookLabel}: ${suffix}`, 'success');
+    } else if (suffix) {
+      runtime?.setStatus?.(suffix, 'success');
+    } else {
+      runtime?.setStatus?.('選択情報を更新しました。', 'success');
+    }
+
+    runtime?.finishAuto?.();
   },
 });
 
