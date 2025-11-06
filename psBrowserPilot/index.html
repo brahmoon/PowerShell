@@ -175,6 +175,16 @@
                 </select>
                 <p class="field-hint">GUIノードはPowerShellスクリプトに含まれず、ブラウザUI上での操作に利用されます。</p>
               </div>
+              <div class="field-group field-checkbox">
+                <label class="checkbox-inline">
+                  <input id="node-chain-execution" name="chainExecution" type="checkbox" />
+                  <span>チェーン実行ノード</span>
+                </label>
+                <p class="field-hint">
+                  後続ノードのスクリプト実行前にこのノードを自動実行します。
+                  <a href="#" class="designer-help-link" data-help-target="chainExecution">チェーン実行の詳細</a>
+                </p>
+              </div>
               <div class="field-group">
                 <label for="node-inputs">入力ポート（1行につき1件）</label>
                 <textarea id="node-inputs" name="inputs" rows="3" placeholder="InputValue"></textarea>
@@ -184,7 +194,10 @@
                 <textarea id="node-outputs" name="outputs" rows="3" placeholder="Result"></textarea>
               </div>
               <div class="field-group">
-                <label for="node-constants">定数入力（ Type | Key | Value ）</label>
+                <label for="node-constants">
+                  定数入力（ Type | Key | Value ）
+                  <a href="#" class="designer-help-link" data-help-target="constantTypes">Typeの一覧</a>
+                </label>
                 <textarea
                   id="node-constants"
                   name="constants"
@@ -269,6 +282,41 @@
             GUIノードの <code>render</code> スクリプトには <code>context</code> オブジェクトが渡され、ノードの状態や入出力を安全に制御できます。
             以下のヘルパーは組み合わせて利用するケースが多いので、必要に応じてセクションを参照してください。
           </p>
+          <section
+            class="designer-help-section"
+            id="designer-help-chainExecution"
+            data-help-section="chainExecution"
+          >
+            <h3>チェーン実行ノード</h3>
+            <p>
+              「チェーン実行ノード」を有効にすると、このノードに接続された後続ノードがPowerShellスクリプトを生成または実行する前に、自動的にこのノードの処理が実行されます。
+              GUIノードの場合は <code>context.registerAutoExecutor</code> でチェーン実行時の処理を登録できます。デフォルトのテンプレートでは現在の状態がそのまま再適用されます。
+            </p>
+            <ul>
+              <li>チェーン実行はワークスペース全体でスクリプトを生成・実行するタイミングで行われます。</li>
+              <li>処理が失敗した場合はエラーが表示され、後続のスクリプト実行は中断されます。</li>
+            </ul>
+          </section>
+          <section
+            class="designer-help-section"
+            id="designer-help-constantTypes"
+            data-help-section="constantTypes"
+          >
+            <h3>定数入力の Type 一覧</h3>
+            <p>Type 列ではコントロールの種類を指定します。主な種類は次のとおりです。</p>
+            <dl>
+              <dt><code>TextBox</code></dt>
+              <dd>自由入力できるテキストボックスです。</dd>
+              <dt><code>Reference</code></dt>
+              <dd>参照ボタン付きでファイルやフォルダーを選択できます。</dd>
+              <dt><code>CheckBox</code></dt>
+              <dd>オン / オフを切り替えるトグルです。値は <code>True</code> / <code>False</code> になります。</dd>
+              <dt><code>RadioButton</code></dt>
+              <dd>True / False のいずれかを選択するラジオボタンです。</dd>
+              <dt><code>SelectBox</code></dt>
+              <dd>複数行にわたって選択肢を列挙すると、プルダウンから選べる一覧になります。</dd>
+            </dl>
+          </section>
           <section class="designer-help-section" id="designer-help-updateConfig" data-help-section="updateConfig">
             <h3><code>updateConfig(name, value, options?)</code></h3>
             <p>ノードの構成値および出力値を更新します。引数は以下の通りです。</p>
@@ -537,6 +585,7 @@ updateConfig('SelectedItems', literal);</code></pre>
         label: document.getElementById('node-label'),
         category: document.getElementById('node-category'),
         execution: document.getElementById('node-execution'),
+        chainExecution: document.getElementById('node-chain-execution'),
         inputs: document.getElementById('node-inputs'),
         outputs: document.getElementById('node-outputs'),
         constants: document.getElementById('node-constants'),
@@ -936,6 +985,7 @@ updateConfig('SelectedItems', literal);</code></pre>
         return {
           ...spec,
           execution: spec?.execution === 'ui' ? 'ui' : 'powershell',
+          chainExecution: spec?.chainExecution === true,
           inputs: [...(spec.inputs || [])],
           outputs: [...(spec.outputs || [])],
           constants: cloneConstants(spec.constants || []),
@@ -1069,6 +1119,9 @@ updateConfig('SelectedItems', literal);</code></pre>
         fields.id.value = fromSample ? '' : spec.id || '';
         fields.category.value = fromSample ? 'Custom' : spec.category || 'Custom';
         fields.execution.value = spec.execution === 'ui' ? 'ui' : 'powershell';
+        if (fields.chainExecution) {
+          fields.chainExecution.checked = Boolean(spec.chainExecution);
+        }
         fields.inputs.value = (spec.inputs || []).join('\n');
         fields.outputs.value = (spec.outputs || []).join('\n');
         fields.constants.value = formatConstants(spec.constants || []);
@@ -1282,6 +1335,7 @@ updateConfig('SelectedItems', literal);</code></pre>
           label: label || 'Untitled node',
           category: fields.category.value.trim() || 'Custom',
           execution: fields.execution.value === 'ui' ? 'ui' : 'powershell',
+          chainExecution: Boolean(fields.chainExecution?.checked),
           inputs: parsePortList(fields.inputs.value),
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
@@ -1335,6 +1389,7 @@ updateConfig('SelectedItems', literal);</code></pre>
           label: label || 'Untitled node',
           category: fields.category.value.trim() || 'Custom',
           execution: fields.execution.value === 'ui' ? 'ui' : 'powershell',
+          chainExecution: Boolean(fields.chainExecution?.checked),
           inputs: parsePortList(fields.inputs.value),
           outputs: parsePortList(fields.outputs.value),
           constants: parseConstants(fields.constants.value),
