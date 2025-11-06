@@ -29,6 +29,7 @@ const DEFAULT_UI_SCRIPT = [
   "      updateConfig('Result', toPowerShellLiteral(value ? 'true' : 'false'));",
   '    };',
   '    apply(active);',
+  '    context.registerAutoExecutor?.(() => apply(active));',
   "    button.addEventListener('click', () => apply(!active));",
   '    return () => {',
   "      button.replaceWith(button.cloneNode(true));",
@@ -74,6 +75,13 @@ const normalizeControlType = (value) => {
 
 const normalizeBooleanConstant = (value) =>
   /^(true|1|yes|on)$/i.test(String(value ?? '').trim()) ? 'True' : 'False';
+
+const normalizeChainExecution = (value) => {
+  if (typeof value === 'string') {
+    return /^(true|1|yes|on)$/i.test(value.trim());
+  }
+  return Boolean(value);
+};
 
 const PLACEHOLDER_PATTERN = /\{\{\s*(input|output|config)\.([A-Za-z0-9_]+)\s*\}\}/g;
 const CONFIG_INPUT_ASSIGN_PATTERN =
@@ -213,6 +221,9 @@ const normalizeSpec = (spec, previous = null) => {
     inputs: normalizeList(spec?.inputs),
     outputs: normalizeList(spec?.outputs),
     constants: normalizeConstants(spec?.constants),
+    chainExecution: normalizeChainExecution(
+      spec?.chainExecution !== undefined ? spec.chainExecution : previous?.chainExecution
+    ),
     script: typeof spec?.script === 'string' ? spec.script.replace(/\r\n/g, '\n') : '',
     ui: normalizeUiSpec(spec?.ui),
     description: typeof spec?.description === 'string' ? spec.description : '',
@@ -339,13 +350,36 @@ const createUiRenderer = (spec) => {
 
   return (context) => {
     const doc = context?.controls?.ownerDocument || (typeof document !== 'undefined' ? document : null);
-    if (context?.controls) {
-      context.controls.innerHTML = normalizedMarkup;
+    const controls = context?.controls || null;
+    if (controls) {
+      controls.innerHTML = normalizedMarkup;
     }
     const activeStyle = ensureStylesheet();
+
+    const runtimeContainer =
+      context?.node?.runtime || (context?.node ? (context.node.runtime = {}) : null);
+    const ensureCustomRuntime = () => {
+      if (!runtimeContainer) {
+        return null;
+      }
+      if (!runtimeContainer.customUi || typeof runtimeContainer.customUi !== 'object') {
+        runtimeContainer.customUi = {};
+      }
+      return runtimeContainer.customUi;
+    };
+    const customRuntime = ensureCustomRuntime();
+    const setAutoExecutor = (fn) => {
+      if (!customRuntime) return;
+      customRuntime.autoExecutor = typeof fn === 'function' ? fn : null;
+    };
+    setAutoExecutor(null);
+
     if (!compiled) {
-      return () => {};
+      return () => {
+        setAutoExecutor(null);
+      };
     }
+
     let teardown = null;
     try {
       const result = compiled({
@@ -353,20 +387,23 @@ const createUiRenderer = (spec) => {
         markup: normalizedMarkup,
         styleElement: activeStyle,
         document: doc,
+        registerAutoExecutor: (handler) => setAutoExecutor(handler),
       });
       if (typeof result === 'function') {
         teardown = result;
       }
     } catch (error) {
       console.error('Failed to execute custom UI node script', error);
-      if (context?.controls && doc) {
+      if (controls && doc) {
         const errorEl = doc.createElement('div');
         errorEl.className = 'custom-node-error';
         errorEl.textContent = `UI script error: ${error.message}`;
-        context.controls.innerHTML = '';
-        context.controls.appendChild(errorEl);
+        controls.innerHTML = '';
+        controls.appendChild(errorEl);
       }
+      setAutoExecutor(null);
     }
+
     return () => {
       if (typeof teardown === 'function') {
         try {
@@ -375,6 +412,7 @@ const createUiRenderer = (spec) => {
           console.warn('Failed to dispose custom UI node', disposeError);
         }
       }
+      setAutoExecutor(null);
     };
   };
 };
@@ -1442,6 +1480,7 @@ export const createEmptySpec = (execution = 'powershell') => ({
   label: '',
   category: 'Custom',
   execution: execution === 'ui' ? 'ui' : 'powershell',
+  chainExecution: false,
   inputs: [],
   outputs: [],
   constants: [
@@ -1585,7 +1624,18 @@ export const specsToDefinitions = (specs) =>
 
       if (normalized.execution === 'ui') {
         definition.render = createUiRenderer(normalized);
+        definition.autoExecute = async ({ node }) => {
+          const executor = node.runtime?.customUi?.autoExecutor;
+          if (typeof executor === 'function') {
+            const result = executor();
+            if (result && typeof result.then === 'function') {
+              await result;
+            }
+          }
+        };
       }
+
+      definition.chainExecution = Boolean(normalized.chainExecution);
 
       if (Object.keys(initialConfig).length) {
         definition.initialConfig = initialConfig;
