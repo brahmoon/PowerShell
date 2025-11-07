@@ -163,18 +163,31 @@ const ensureConsole = () => {
   container.innerHTML = `
     <div class="run-console__resize" data-role="resize" title="ドラッグでサイズ変更"></div>
     <header class="run-console__header">
-      <button type="button" class="run-console__toggle" data-role="toggle" aria-expanded="false" aria-controls="run-console-body">▴</button>
-      <div class="run-console__titles">
-        <span class="run-console__context" data-role="context">全ノードを実行</span>
+      <div class="run-console__header-row run-console__header-row--primary">
+        <button
+          type="button"
+          class="run-console__toggle"
+          data-role="toggle"
+          aria-expanded="false"
+          aria-controls="run-console-body"
+        >▴</button>
+        <div class="run-console__titles">
+          <span class="run-console__context" data-role="context">全ノードを実行</span>
+        </div>
+        <span class="run-console__status" data-role="status">待機中</span>
+        <span class="run-console__server" data-role="server"></span>
+        <button
+          type="button"
+          class="run-console__collapse"
+          data-role="collapse"
+          aria-label="デバッグコンソールを最小化"
+        >✕</button>
       </div>
-      <span class="run-console__status" data-role="status">待機中</span>
-      <span class="run-console__server" data-role="server"></span>
-      <div class="run-console__actions">
+      <div class="run-console__header-row run-console__header-row--actions run-console__actions">
         <button type="button" class="secondary" data-action="copy-output">出力をコピー</button>
         <button type="button" class="secondary" data-action="copy-script">スクリプトをコピー</button>
         <button type="button" class="primary" data-action="rerun">再実行</button>
       </div>
-      <button type="button" class="run-console__collapse" data-role="collapse" aria-label="デバッグコンソールを最小化">✕</button>
     </header>
     <div class="run-console__body" id="run-console-body">
       <div class="run-console__section">

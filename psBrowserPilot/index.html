@@ -1025,30 +1025,6 @@ updateConfig('SelectedItems', literal);</code></pre>
         });
       };
 
-      const SCRIPT_PLACEHOLDER_PATTERN = /\{\{\s*(input|output|config)\.([A-Za-z0-9_]+)(?:\.[^}]*)?\s*\}\}/g;
-
-      const extractScriptReferences = (text) => {
-        const references = {
-          input: new Set(),
-          output: new Set(),
-          config: new Set(),
-        };
-        if (typeof text !== 'string' || !text.trim()) {
-          return references;
-        }
-        SCRIPT_PLACEHOLDER_PATTERN.lastIndex = 0;
-        let match;
-        while ((match = SCRIPT_PLACEHOLDER_PATTERN.exec(text)) !== null) {
-          const scope = match[1];
-          const rawKey = match[2] || '';
-          const baseKey = sanitizeToken(rawKey.split('.')[0]);
-          if (baseKey && references[scope]) {
-            references[scope].add(baseKey);
-          }
-        }
-        return references;
-      };
-
       const formatConstants = (constants) =>
         (constants || [])
           .reduce((lines, constant) => {
@@ -1549,35 +1525,6 @@ updateConfig('SelectedItems', literal);</code></pre>
           script: fields.script.value.replace(/\r\n/g, '\n'),
           ui: readUiSpecFromFields(),
         };
-        if (spec.execution !== 'ui') {
-          const refs = extractScriptReferences(spec.script);
-          const missingInputs = Array.from(refs.input).filter((key) => !spec.inputs.includes(key));
-          const missingOutputs = Array.from(refs.output).filter((key) => !spec.outputs.includes(key));
-          const constantKeys = new Set(
-            spec.constants.map((constant) => (constant?.key ? sanitizeToken(constant.key) : '')).filter(Boolean)
-          );
-          const missingConfigs = Array.from(refs.config).filter((key) => !constantKeys.has(key));
-          if (missingInputs.length || missingOutputs.length || missingConfigs.length) {
-            const messages = [];
-            if (missingInputs.length) {
-              messages.push(
-                `スクリプトで参照されている入力ポートが見つかりません: ${missingInputs.join(', ')}`
-              );
-            }
-            if (missingOutputs.length) {
-              messages.push(
-                `スクリプトで参照されている出力ポートが見つかりません: ${missingOutputs.join(', ')}`
-              );
-            }
-            if (missingConfigs.length) {
-              messages.push(
-                `スクリプトで参照されている定数が見つかりません: ${missingConfigs.join(', ')}`
-              );
-            }
-            alert(messages.join('\n'));
-            return;
-          }
-        }
         const existing = customSpecs.find((item) => item.id === spec.id);
         if (existing && existing.id !== originalId) {
           const overwrite = confirm('このIDのノードは既に存在します。上書きしますか？');

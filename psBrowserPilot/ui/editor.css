@@ -1627,13 +1627,37 @@ body.has-run-console {
 }
 
 .run-console__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
-  gap: 0.75rem;
-  align-items: center;
-  padding: 0rem 1rem 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.1rem 1rem 0.6rem 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+}
+
+.run-console__header-row {
+  display: grid;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.run-console__header-row--primary {
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1.2fr) auto;
+}
+
+.run-console__header-row--actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.run-console.is-collapsed .run-console__header-row--actions {
+  display: none;
+}
+
+.run-console.is-collapsed .run-console__header {
+  padding-bottom: 0.3rem;
 }
 
 .run-console__toggle {
@@ -1699,10 +1723,7 @@ body.has-run-console {
 }
 
 .run-console__actions {
-  display: flex;
   gap: 0.4rem;
-  justify-content: flex-end;
-  flex-wrap: wrap;
 }
 
 .run-console__collapse {
@@ -1713,7 +1734,7 @@ body.has-run-console {
   font-size: 1.1rem;
   padding: 0.25rem;
   justify-self: end;
-  align-self: start;
+  align-self: center;
   transition: color 120ms ease;
 }
 
