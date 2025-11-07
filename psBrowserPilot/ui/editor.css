@@ -895,7 +895,6 @@ body.theme-dark .node-control-select-input {
 }
 
 .port.flow-port {
-  justify-content: center;
   gap: 0.25rem;
   opacity: 0.85;
 }
