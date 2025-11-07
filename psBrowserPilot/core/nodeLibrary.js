@@ -51,6 +51,28 @@ const DEFAULT_UI_STYLE = [
   '  font-weight: 600;',
   '}',
 ].join('\n');
+
+const RANDOM_ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+const generateRandomId = (length = 12) => {
+  const size = Math.max(1, Math.floor(length));
+  const chars = [];
+  const alphabet = RANDOM_ID_ALPHABET;
+  const limit = alphabet.length;
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint32Array(size);
+    crypto.getRandomValues(bytes);
+    for (let i = 0; i < size; i += 1) {
+      chars.push(alphabet[bytes[i] % limit]);
+    }
+  } else {
+    for (let i = 0; i < size; i += 1) {
+      const index = Math.floor(Math.random() * limit);
+      chars.push(alphabet[index]);
+    }
+  }
+  return chars.join('');
+};
 const CONTROL_TYPES = new Map(
   [
     ['text', 'TextBox'],
@@ -1484,7 +1506,7 @@ export const SAMPLE_NODE_TEMPLATES = [
 ];
 
 export const createEmptySpec = (execution = 'powershell') => ({
-  id: '',
+  id: generateRandomId(12),
   label: '',
   category: 'Custom',
   execution: execution === 'ui' ? 'ui' : 'powershell',

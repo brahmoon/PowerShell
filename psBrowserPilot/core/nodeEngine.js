@@ -99,6 +99,10 @@ export class NodeEditor {
     this._paletteMenuOutsideHandler = null;
 
     this._autoExecutionPromises = new Map();
+    this._executingNodes = new Set();
+
+    this._autoSaveTimer = null;
+    this._autoGraphRestored = false;
 
     this._autoSaveTimer = null;
     this._autoGraphRestored = false;
@@ -116,6 +120,24 @@ export class NodeEditor {
     this._applyViewport();
 
     this.restoreAutoGraph();
+  }
+
+  _escapeSelector(value) {
+    if (typeof value !== 'string') {
+      return '';
+    }
+    if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') {
+      return window.CSS.escape(value);
+    }
+    return value.replace(/([\.\#\[\]\s:"'\\])/g, '\\$1');
+  }
+
+  _getNodeElement(nodeId) {
+    if (!nodeId) {
+      return null;
+    }
+    const escaped = this._escapeSelector(String(nodeId));
+    return this.nodeLayer.querySelector(`.node[data-id="${escaped}"]`);
   }
 
   _makePaletteId(prefix) {
@@ -1832,7 +1854,7 @@ export class NodeEditor {
       .map((id) => {
         const item = this.nodes.get(id);
         if (!item) return null;
-        const el = this.nodeLayer.querySelector(`.node[data-id="${id}"]`);
+        const el = this._getNodeElement(id);
         const width = el?.offsetWidth ?? 200;
         const height = el?.offsetHeight ?? 120;
         return {
@@ -1991,7 +2013,7 @@ export class NodeEditor {
     event.stopPropagation();
     event.preventDefault();
     const rect = this.nodeLayer.getBoundingClientRect();
-    const nodeEl = this.nodeLayer.querySelector(`.node[data-id="${nodeId}"]`);
+    const nodeEl = this._getNodeElement(nodeId);
     if (!nodeEl) return;
     const portEl = event.currentTarget;
     const portRect = portEl.getBoundingClientRect();
@@ -2114,7 +2136,7 @@ export class NodeEditor {
   }
 
   _getPortPosition(nodeId, portName, type) {
-    const nodeEl = this.nodeLayer.querySelector(`.node[data-id="${nodeId}"]`);
+    const nodeEl = this._getNodeElement(nodeId);
     if (!nodeEl) return null;
     const selector = `.port[data-port="${portName}"][data-type="${type}"] .handle`;
     const handle = nodeEl.querySelector(selector);
@@ -2279,9 +2301,10 @@ export class NodeEditor {
   }
 
   _syncControlDisplay(nodeId, key, displayValue) {
-    const nodeEl = this.nodeLayer.querySelector(`.node[data-id='${nodeId}']`);
+    const nodeEl = this._getNodeElement(nodeId);
     if (!nodeEl) return;
-    const elements = nodeEl.querySelectorAll(`[data-control-key='${key}']`);
+    const escapedKey = this._escapeSelector(String(key));
+    const elements = nodeEl.querySelectorAll(`[data-control-key="${escapedKey}"]`);
     if (!elements.length) return;
     const value = displayValue !== undefined ? displayValue : this.nodes.get(nodeId)?.config[key] ?? '';
     elements.forEach((element) => {
@@ -2516,6 +2539,57 @@ export class NodeEditor {
         await this.runAutoNode(nodeId, { includeUpstream: true });
       }
     }
+  }
+
+  _resolveExecutableNodes(scopeSet = null) {
+    const order = this._topologicalSort();
+    const targets = [];
+    order.forEach((nodeId) => {
+      if (scopeSet && !scopeSet.has(nodeId)) {
+        return;
+      }
+      const node = this.nodes.get(nodeId);
+      if (!node || node.definition?.execution === 'ui') {
+        return;
+      }
+      targets.push(nodeId);
+    });
+    return targets;
+  }
+
+  _setNodesExecuting(nodeIds, executing) {
+    const ids = nodeIds instanceof Set ? Array.from(nodeIds) : Array.from(nodeIds || []);
+    if (!ids.length) {
+      return;
+    }
+    ids.forEach((nodeId) => {
+      if (!this.nodes.has(nodeId)) {
+        return;
+      }
+      const node = this.nodes.get(nodeId);
+      if (node?.definition?.execution === 'ui') {
+        return;
+      }
+      const el = this._getNodeElement(nodeId);
+      if (!el) {
+        return;
+      }
+      if (executing) {
+        el.classList.add('is-executing');
+        this._executingNodes.add(nodeId);
+      } else {
+        el.classList.remove('is-executing');
+        this._executingNodes.delete(nodeId);
+      }
+    });
+  }
+
+  _clearExecutingNodes() {
+    if (!this._executingNodes.size) {
+      return;
+    }
+    const ids = Array.from(this._executingNodes);
+    this._setNodesExecuting(ids, false);
   }
 
   resolveInputValue(nodeId, inputName, { preferRaw = false } = {}) {
@@ -3269,6 +3343,9 @@ export class NodeEditor {
     }
 
     const { allowedNodes = null, targetNodeId = null, includeUpstream = true } = options;
+    this._clearExecutingNodes();
+    let highlightIds = [];
+    let highlightApplied = false;
 
     try {
       let scopeSet = null;
@@ -3279,6 +3356,12 @@ export class NodeEditor {
         if (!scopeSet.size) {
           throw new Error('実行対象のノードが見つかりません。');
         }
+      }
+
+      highlightIds = this._resolveExecutableNodes(scopeSet);
+      if (highlightIds.length) {
+        this._setNodesExecuting(highlightIds, true);
+        highlightApplied = true;
       }
 
       if (scopeSet) {
@@ -3299,6 +3382,11 @@ export class NodeEditor {
       }
     } catch (error) {
       alert(error?.message || String(error));
+    } finally {
+      if (highlightApplied && highlightIds.length) {
+        this._setNodesExecuting(highlightIds, false);
+      }
+      this._clearExecutingNodes();
     }
   }
 
@@ -3617,7 +3705,8 @@ export class NodeEditor {
       }
     }
     this.nodes.delete(nodeId);
-    const el = this.nodeLayer.querySelector(`.node[data-id="${nodeId}"]`);
+    this._executingNodes.delete(nodeId);
+    const el = this._getNodeElement(nodeId);
     if (el) {
       el.remove();
     }

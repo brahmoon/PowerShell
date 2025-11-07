@@ -636,6 +636,8 @@ updateConfig('SelectedItems', literal);</code></pre>
             const shouldShow = target === mode || target === 'both' || target === 'shared';
             section.hidden = !shouldShow;
             section.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+            section.style.display = shouldShow ? '' : 'none';
+            section.classList.toggle('is-hidden', !shouldShow);
             section
               .querySelectorAll('input, textarea, select, button')
               .forEach((control) => {
