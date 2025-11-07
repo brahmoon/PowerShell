@@ -1748,6 +1748,7 @@ export class NodeEditor {
       } else {
         runBtn.addEventListener('click', async (event) => {
           event.stopPropagation();
+          this._selectNode(node.id, { additive: false, toggle: false });
           try {
             await this.runNodeScript(node.id, { includeUpstream: true });
           } catch (error) {
@@ -1836,7 +1837,8 @@ export class NodeEditor {
       event.target.closest('.handle') ||
       event.target.classList.contains('node-delete') ||
       event.target.closest('.node-open-designer') ||
-      event.target.closest('.node-controls')
+      event.target.closest('.node-controls') ||
+      event.target.closest('.node-run')
     ) {
       return;
     }
