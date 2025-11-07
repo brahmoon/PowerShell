@@ -16,8 +16,14 @@
                           "value":  "# TODO: set value"
                       }
                   ],
+    "chainExecution":  false,
     "script":  "{{ config.text }}",
+    "ui":  {
+               "markup":  "",
+               "script":  "",
+               "style":  ""
+           },
     "description":  "",
     "createdAt":  "2025-11-03T14:56:48.829Z",
-    "updatedAt":  "2025-11-03T14:56:48.829Z"
+    "updatedAt":  "2025-11-07T16:37:54.983Z"
 }
