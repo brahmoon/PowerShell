@@ -118,6 +118,7 @@
     </template>
 
     <aside id="node-designer" class="designer" aria-hidden="true">
+      <div class="designer-resize-handle" data-role="designer-resize" title="幅をドラッグで調整"></div>
       <div class="designer-panel">
         <header class="designer-header">
           <div>
@@ -218,7 +219,7 @@
                   name="script"
                   class="code-area"
                   rows="12"
-                  placeholder="# {{input.Value}} や {{config.threshold}} のようなプレースホルダーを使用できます。"
+                  placeholder="# {{input.Value}} や {{config.threshold}}、{{output.Result.isConnected}} のようなプレースホルダーを使用できます。"
                 ></textarea>
               </div>
               <div class="field-group" data-execution="ui">
@@ -345,6 +346,20 @@ updateConfig('Result', scriptValue);</code></pre>
 if (workbook) {
   updateConfig('WorkbookName__raw', workbook, { silent: true });
 }</code></pre>
+          </section>
+          <section class="designer-help-section" id="designer-help-portConnections" data-help-section="portConnections">
+            <h3>ポートの接続状態を確認する</h3>
+            <p>
+              PowerShellスクリプト内では <code>{{ input.PortName.isConnected }}</code> や <code>{{ output.Result.isConnected }}</code> を使用して、ポートの接続有無に応じた処理を記述できます。戻り値は <code>$true</code> / <code>$false</code> です。
+            </p>
+            <p>
+              カスタムUIスクリプトでは <code>context.getPortState('input', 'PortName')</code> や <code>context.isPortConnected('output', 'Result')</code> を利用して同様の情報を取得できます。
+            </p>
+            <pre><code class="language-js">const state = context.getPortState('input', 'Source');
+if (state?.isConnected) {
+  console.log('Source port is connected');
+}
+</code></pre>
           </section>
           <section class="designer-help-section" id="designer-help-toPowerShellLiteral" data-help-section="toPowerShellLiteral">
             <h3><code>toPowerShellLiteral(value)</code></h3>
@@ -586,6 +601,28 @@ updateConfig('SelectedItems', literal);</code></pre>
       const openDesignerHelpBtn = document.getElementById('open-designer-help');
       const designerHelpDialog = document.getElementById('designer-help-dialog');
       const closeDesignerHelpBtn = document.getElementById('close-designer-help');
+      const designerResizeHandle = designerEl.querySelector('[data-role="designer-resize"]');
+
+      const DESIGNER_MIN_WIDTH = 360;
+      const getDesignerMaxWidth = () =>
+        Math.max(
+          DESIGNER_MIN_WIDTH,
+          Math.min(window.innerWidth * 0.85, window.innerWidth - 280)
+        );
+      let designerWidthPx = Math.round(
+        Math.max(DESIGNER_MIN_WIDTH, Math.min(window.innerWidth * 0.5, getDesignerMaxWidth()))
+      );
+      const setDesignerWidth = (width) => {
+        const maxWidth = getDesignerMaxWidth();
+        const clamped = Math.max(DESIGNER_MIN_WIDTH, Math.min(width, maxWidth));
+        designerWidthPx = clamped;
+        document.body.style.setProperty('--designer-width', `${clamped}px`);
+        if (editor) {
+          window.requestAnimationFrame(() => editor.resize());
+        }
+      };
+
+      setDesignerWidth(designerWidthPx);
 
       const THEME_STORAGE_KEY = 'nodeflow.theme';
       const CONSTANT_PLACEHOLDER = '# TODO: set value';
@@ -691,6 +728,47 @@ updateConfig('SelectedItems', literal);</code></pre>
         const mode = themeToggle.checked ? 'dark' : 'light';
         applyTheme(mode);
         persistTheme(mode);
+      });
+
+      designerResizeHandle?.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        const startX = event.clientX;
+        const startWidth = designerWidthPx;
+        const pointerId = event.pointerId;
+        try {
+          designerResizeHandle.setPointerCapture(pointerId);
+        } catch (error) {
+          // Ignore if pointer capture is not supported.
+        }
+        const handleMove = (moveEvent) => {
+          const delta = startX - moveEvent.clientX;
+          setDesignerWidth(startWidth + delta);
+        };
+        const handleUp = (upEvent) => {
+          if (upEvent.pointerId !== pointerId) {
+            return;
+          }
+          window.removeEventListener('pointermove', handleMove);
+          window.removeEventListener('pointerup', handleUp);
+          window.removeEventListener('pointercancel', handleUp);
+          try {
+            designerResizeHandle.releasePointerCapture(pointerId);
+          } catch (error) {
+            // Ignore release errors.
+          }
+        };
+        window.addEventListener('pointermove', handleMove);
+        window.addEventListener('pointerup', handleUp);
+        window.addEventListener('pointercancel', handleUp);
+      });
+
+      window.addEventListener('resize', () => {
+        const maxWidth = getDesignerMaxWidth();
+        if (designerWidthPx > maxWidth) {
+          setDesignerWidth(maxWidth);
+        } else {
+          setDesignerWidth(designerWidthPx);
+        }
       });
 
       const openSettings = () => {
@@ -1231,6 +1309,7 @@ updateConfig('SelectedItems', literal);</code></pre>
       };
 
       const openDesigner = () => {
+        setDesignerWidth(designerWidthPx);
         ensureDesignerInitialized();
         designerEl.classList.add('open');
         designerEl.setAttribute('aria-hidden', 'false');

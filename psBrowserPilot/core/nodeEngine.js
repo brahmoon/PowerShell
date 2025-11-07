@@ -2,6 +2,9 @@ import { wrapPowerShellScript } from './psTemplate.js';
 import { toPowerShellLiteral } from './guiUtils.js';
 
 const HANDLE_RADIUS = 6;
+const FLOW_INPUT_PORT = '__flow_in__';
+const FLOW_OUTPUT_PORT = '__flow_out__';
+const FLOW_PORT_SET = new Set([FLOW_INPUT_PORT, FLOW_OUTPUT_PORT]);
 const PALETTE_STORAGE_KEY = 'nodeflow.palette.v1';
 const PALETTE_NODE_PREFIX = 'node:';
 const PALETTE_DIRECTORY_PREFIX = 'dir:';
@@ -24,6 +27,7 @@ class Node {
       ...controlDefaults,
     };
     this.teardown = null;
+    this.runtime = {};
   }
 
   serialize() {
@@ -533,6 +537,14 @@ export class NodeEditor {
       const fromNode = this.nodes.get(connection.fromNode);
       const toNode = this.nodes.get(connection.toNode);
       if (!fromNode || !toNode) return false;
+      if (
+        FLOW_PORT_SET.has(connection.fromPort) ||
+        FLOW_PORT_SET.has(connection.toPort)
+      ) {
+        return (
+          connection.fromPort === FLOW_OUTPUT_PORT && connection.toPort === FLOW_INPUT_PORT
+        );
+      }
       const fromOutputs = Array.isArray(fromNode.definition.outputs)
         ? fromNode.definition.outputs
         : [];
@@ -543,6 +555,7 @@ export class NodeEditor {
     });
     if (this.connections.length !== previousConnectionLength) {
       changed = true;
+      this._refreshAllPortStates();
     }
 
     if (this.selectedConnection && !this.connections.includes(this.selectedConnection)) {
@@ -1696,6 +1709,8 @@ export class NodeEditor {
       this._renderNodeControls(node, controlsContainer);
     }
 
+    this._updateNodePortStates(node.id);
+
     if (typeof node.definition.render === 'function') {
       const teardown = node.definition.render({
         node,
@@ -1706,6 +1721,9 @@ export class NodeEditor {
           this._updateNodeConfigValue(node.id, key, value, options),
         resolveInput: (inputName, options = {}) =>
           this.resolveInputValue(node.id, inputName, options),
+        ports: node.runtime?.portStates || this._getNodePortStates(node.id),
+        getPortState: (type, name) => this._getSinglePortState(node.id, type, name),
+        isPortConnected: (type, name) => this._isPortConnected(node.id, type, name),
         ensureAutoNodes: (portNames) => this.ensureAutoNodesForNode(node.id, portNames),
         runAuto: (options = {}) => this.runAutoNode(node.id, options),
         toPowerShellLiteral,
@@ -1759,16 +1777,26 @@ export class NodeEditor {
     }
 
     const inputContainer = el.querySelector('.inputs');
-    (node.definition.inputs || []).forEach((name) => {
-      const port = this._createPort('input', name, node.id);
-      inputContainer.appendChild(port);
-    });
+    if (inputContainer) {
+      inputContainer.appendChild(
+        this._createPort('input', FLOW_INPUT_PORT, node.id, { flow: true })
+      );
+      (node.definition.inputs || []).forEach((name) => {
+        const port = this._createPort('input', name, node.id);
+        inputContainer.appendChild(port);
+      });
+    }
 
     const outputContainer = el.querySelector('.outputs');
-    (node.definition.outputs || []).forEach((name) => {
-      const port = this._createPort('output', name, node.id);
-      outputContainer.appendChild(port);
-    });
+    if (outputContainer) {
+      outputContainer.appendChild(
+        this._createPort('output', FLOW_OUTPUT_PORT, node.id, { flow: true })
+      );
+      (node.definition.outputs || []).forEach((name) => {
+        const port = this._createPort('output', name, node.id);
+        outputContainer.appendChild(port);
+      });
+    }
 
     el.addEventListener('pointerdown', (event) => {
       const withCtrl = event.ctrlKey || event.metaKey;
@@ -1790,6 +1818,197 @@ export class NodeEditor {
     this.nodeLayer.appendChild(el);
   }
 
+  _createPortState({ value = '', rawValue, configValue, isConnected = false } = {}) {
+    const state = {
+      value: value ?? '',
+      isConnected: Boolean(isConnected),
+    };
+    if (rawValue !== undefined) {
+      state.rawValue = rawValue;
+    }
+    if (configValue !== undefined) {
+      state.configValue = configValue;
+    }
+    return state;
+  }
+
+  _getNodePortStates(nodeId) {
+    const node = this.nodes.get(nodeId);
+    const emptyFlow = {
+      input: this._createPortState({ isConnected: false }),
+      output: this._createPortState({ isConnected: false }),
+    };
+    if (!node) {
+      return { inputs: {}, outputs: {}, flow: emptyFlow };
+    }
+    const config = node.config || {};
+    const controls = Array.isArray(node.definition?.controls)
+      ? node.definition.controls
+      : [];
+    const controlBindings = new Map();
+    controls.forEach((control) => {
+      if (control?.bindsToInput) {
+        controlBindings.set(control.bindsToInput, control);
+      }
+    });
+
+    const inputs = {};
+    (node.definition.inputs || []).forEach((inputName) => {
+      const connection = this.connections.find(
+        (c) => c.toNode === nodeId && c.toPort === inputName
+      );
+      const isConnected = Boolean(connection);
+      let value = '';
+      let rawValue;
+      if (connection) {
+        const sourceNode = this.nodes.get(connection.fromNode);
+        if (sourceNode?.definition?.execution === 'ui') {
+          value = sourceNode?.config?.[connection.fromPort] ?? '';
+          const sourceRawKey = `${connection.fromPort}__raw`;
+          if (Object.prototype.hasOwnProperty.call(sourceNode?.config || {}, sourceRawKey)) {
+            rawValue = sourceNode.config[sourceRawKey];
+          }
+        }
+      } else {
+        const rawKey = `${inputName}__raw`;
+        if (Object.prototype.hasOwnProperty.call(config, rawKey)) {
+          rawValue = config[rawKey];
+        }
+        const boundControl = controlBindings.get(inputName);
+        if (boundControl) {
+          value = config[boundControl.key] ?? '';
+        } else {
+          value = config[inputName] ?? '';
+        }
+      }
+      inputs[inputName] = this._createPortState({
+        value,
+        rawValue,
+        isConnected,
+      });
+    });
+
+    const outputs = {};
+    (node.definition.outputs || []).forEach((outputName) => {
+      const isConnected = this.connections.some(
+        (c) => c.fromNode === nodeId && c.fromPort === outputName
+      );
+      const rawKey = `${outputName}__raw`;
+      const rawValue = Object.prototype.hasOwnProperty.call(config, rawKey)
+        ? config[rawKey]
+        : undefined;
+      const configValue = Object.prototype.hasOwnProperty.call(config, outputName)
+        ? config[outputName]
+        : undefined;
+      outputs[outputName] = this._createPortState({
+        value: configValue ?? '',
+        rawValue,
+        configValue,
+        isConnected,
+      });
+    });
+
+    const flowInputConnected = this.connections.some(
+      (c) => c.toNode === nodeId && c.toPort === FLOW_INPUT_PORT
+    );
+    const flowOutputConnected = this.connections.some(
+      (c) => c.fromNode === nodeId && c.fromPort === FLOW_OUTPUT_PORT
+    );
+
+    return {
+      inputs,
+      outputs,
+      flow: {
+        input: this._createPortState({ isConnected: flowInputConnected }),
+        output: this._createPortState({ isConnected: flowOutputConnected }),
+      },
+    };
+  }
+
+  _updateNodePortStates(nodeId) {
+    const node = this.nodes.get(nodeId);
+    if (!node) return null;
+    const states = this._getNodePortStates(nodeId);
+    if (!node.runtime || typeof node.runtime !== 'object') {
+      node.runtime = {};
+    }
+    node.runtime.portStates = states;
+    return states;
+  }
+
+  _refreshAllPortStates() {
+    this.nodes.forEach((node) => {
+      this._updateNodePortStates(node.id);
+    });
+  }
+
+  _isPortConnected(nodeId, type, name) {
+    if (!nodeId) {
+      return false;
+    }
+    const normalizedType = String(type || '').toLowerCase();
+    const normalizedName = typeof name === 'string' ? name.toLowerCase() : '';
+    const isFlowInputConnected = () =>
+      this.connections.some((c) => c.toNode === nodeId && c.toPort === FLOW_INPUT_PORT);
+    const isFlowOutputConnected = () =>
+      this.connections.some((c) => c.fromNode === nodeId && c.fromPort === FLOW_OUTPUT_PORT);
+
+    if (normalizedType === 'input') {
+      return this.connections.some((c) => c.toNode === nodeId && c.toPort === name);
+    }
+    if (normalizedType === 'output') {
+      return this.connections.some((c) => c.fromNode === nodeId && c.fromPort === name);
+    }
+    if (normalizedType === 'flow-output' || normalizedType === 'flowout') {
+      return isFlowOutputConnected();
+    }
+    if (normalizedType === 'flow-input' || normalizedType === 'flowin') {
+      return isFlowInputConnected();
+    }
+    if (normalizedType === 'flow') {
+      if (normalizedName === 'output' || name === FLOW_OUTPUT_PORT) {
+        return isFlowOutputConnected();
+      }
+      return isFlowInputConnected();
+    }
+
+    if (typeof name === 'string') {
+      if (name === FLOW_OUTPUT_PORT || normalizedName === 'output') {
+        return isFlowOutputConnected();
+      }
+      if (name === FLOW_INPUT_PORT || normalizedName === 'input') {
+        return isFlowInputConnected();
+      }
+      if (this.connections.some((c) => c.toNode === nodeId && c.toPort === name)) {
+        return true;
+      }
+      return this.connections.some((c) => c.fromNode === nodeId && c.fromPort === name);
+    }
+
+    return false;
+  }
+
+  _getSinglePortState(nodeId, type, name) {
+    const states = this._getNodePortStates(nodeId);
+    const normalizedType = String(type || '').toLowerCase();
+    if (normalizedType === 'input') {
+      return states.inputs?.[name] || this._createPortState({ isConnected: false });
+    }
+    if (normalizedType === 'output') {
+      return states.outputs?.[name] || this._createPortState({ isConnected: false });
+    }
+    if (normalizedType === 'flow-output' || normalizedType === 'flowout') {
+      return states.flow.output;
+    }
+    if (normalizedType === 'flow-input' || normalizedType === 'flowin') {
+      return states.flow.input;
+    }
+    if (name === 'output' || name === FLOW_OUTPUT_PORT) {
+      return states.flow.output;
+    }
+    return states.flow.input;
+  }
+
   _redrawNodes() {
     this.nodeLayer.querySelectorAll('.node').forEach((nodeEl) => nodeEl.remove());
     this.nodes.forEach((node) => {
@@ -1804,20 +2023,40 @@ export class NodeEditor {
     this._applySelectionStyles();
   }
 
-  _createPort(type, name, nodeId) {
+  _createPort(type, name, nodeId, { flow = false } = {}) {
     const port = document.createElement('div');
     port.className = 'port';
     port.dataset.port = name;
     port.dataset.nodeId = nodeId;
     port.dataset.type = type;
+    port.dataset.flow = flow ? 'true' : 'false';
+    if (flow) {
+      port.classList.add('flow-port');
+    }
 
     const handle = document.createElement('div');
     handle.className = 'handle';
-    handle.title = `${type === 'input' ? 'Connect to' : 'Connect from'} ${name}`;
-    handle.addEventListener('pointerdown', (event) => this._beginConnection(event, nodeId, name, type));
+    if (flow) {
+      const title =
+        type === 'input' ? 'フロー入力ポートに接続' : 'フロー出力ポートに接続';
+      handle.title = title;
+      handle.setAttribute('aria-label', title);
+    } else {
+      const title = `${type === 'input' ? 'Connect to' : 'Connect from'} ${name}`;
+      handle.title = title;
+      handle.setAttribute('aria-label', title);
+    }
+    handle.addEventListener('pointerdown', (event) =>
+      this._beginConnection(event, nodeId, name, type, { flow })
+    );
 
     const label = document.createElement('span');
-    label.textContent = name;
+    if (flow) {
+      label.textContent = '';
+      label.classList.add('visually-hidden');
+    } else {
+      label.textContent = name;
+    }
 
     if (type === 'input') {
       port.append(handle, label);
@@ -1825,9 +2064,11 @@ export class NodeEditor {
       port.append(label, handle);
     }
 
-    port.addEventListener('contextmenu', (event) =>
-      this._openPortContextMenu(event, { nodeId, portName: name, portType: type })
-    );
+    if (!flow) {
+      port.addEventListener('contextmenu', (event) =>
+        this._openPortContextMenu(event, { nodeId, portName: name, portType: type })
+      );
+    }
 
     return port;
   }
@@ -2011,14 +2252,15 @@ export class NodeEditor {
     this._applyViewport();
   }
 
-  _beginConnection(event, nodeId, portName, portType) {
+  _beginConnection(event, nodeId, portName, portType, { flow = false } = {}) {
     event.stopPropagation();
     event.preventDefault();
     const rect = this.nodeLayer.getBoundingClientRect();
     const nodeEl = this._getNodeElement(nodeId);
     if (!nodeEl) return;
-    const portEl = event.currentTarget;
-    const portRect = portEl.getBoundingClientRect();
+    const handleEl = event.currentTarget;
+    const portEl = handleEl?.closest('.port');
+    const portRect = handleEl.getBoundingClientRect();
     const start = {
       x: portRect.left - rect.left + HANDLE_RADIUS,
       y: portRect.top - rect.top + HANDLE_RADIUS,
@@ -2033,6 +2275,7 @@ export class NodeEditor {
       current: start,
       startWorld: this._screenToWorld(start),
       currentWorld: this._screenToWorld(start),
+      isFlow: flow || portEl?.dataset.flow === 'true',
     };
 
     const move = (ev) => this._trackConnection(ev);
@@ -2065,6 +2308,13 @@ export class NodeEditor {
     const nodeId = port.dataset.nodeId;
     const portName = port.dataset.port;
     const portType = port.dataset.type;
+    const isFlowPort = port.dataset.flow === 'true';
+
+    if (!!this.activeConnection.isFlow !== isFlowPort) {
+      this.activeConnection = null;
+      this._drawConnections();
+      return;
+    }
 
     if (portType === 'output') {
       this.activeConnection.fromNode = nodeId;
@@ -2101,6 +2351,9 @@ export class NodeEditor {
   }
 
   _addConnection(fromNode, fromPort, toNode, toPort) {
+    const replacedConnections = this.connections.filter(
+      (c) => c.toNode === toNode && c.toPort === toPort
+    );
     this.connections = this.connections.filter(
       (c) => !(c.toNode === toNode && c.toPort === toPort)
     );
@@ -2117,6 +2370,11 @@ export class NodeEditor {
     if (!exists) {
       this.connections.push({ fromNode, fromPort, toNode, toPort });
     }
+    this._updateNodePortStates(fromNode);
+    this._updateNodePortStates(toNode);
+    replacedConnections.forEach((connection) => {
+      this._updateNodePortStates(connection.fromNode);
+    });
     const sourceNode = this.nodes.get(fromNode);
     if (sourceNode?.definition?.execution === 'ui') {
       const outputs = Array.isArray(sourceNode.definition.outputs)
@@ -2246,6 +2504,12 @@ export class NodeEditor {
     const target = this.selectedConnection;
     this.connections = this.connections.filter((connection) => connection !== target);
     this._clearConnectionSelection({ redraw: false });
+    if (target?.fromNode) {
+      this._updateNodePortStates(target.fromNode);
+    }
+    if (target?.toNode) {
+      this._updateNodePortStates(target.toNode);
+    }
     this._drawConnections();
     this._markDirty();
   }
@@ -3264,25 +3528,60 @@ export class NodeEditor {
       return '';
     };
 
-    const getInputVar = (nodeId, inputName) => {
+    const buildInputState = (nodeId, inputName) => {
+      const state = { value: '', isConnected: false };
       const connection = this.connections.find(
         (c) => c.toNode === nodeId && c.toPort === inputName
       );
       if (connection) {
+        state.isConnected = true;
         const sourceNode = this.nodes.get(connection.fromNode);
         if (sourceNode?.definition?.execution === 'ui') {
-          return getUiOutputForScript(connection.fromNode, connection.fromPort);
+          state.value = getUiOutputForScript(connection.fromNode, connection.fromPort);
+          const sourceRawKey = `${connection.fromPort}__raw`;
+          if (Object.prototype.hasOwnProperty.call(sourceNode?.config || {}, sourceRawKey)) {
+            state.rawValue = sourceNode.config[sourceRawKey];
+          }
+        } else {
+          state.value = getOutputVar(connection.fromNode, connection.fromPort);
         }
-        return getOutputVar(connection.fromNode, connection.fromPort);
+        return state;
       }
       const node = this.nodes.get(nodeId);
-      if (!node) return '';
+      if (!node) {
+        return state;
+      }
       const controls = node.definition.controls || [];
       const control = controls.find((c) => c.bindsToInput === inputName);
       if (control) {
-        return node.config[control.key] || '';
+        state.value = node.config[control.key] || '';
+      } else {
+        state.value = node.config[inputName] || '';
       }
-      return node.config[inputName] || '';
+      const rawKey = `${inputName}__raw`;
+      if (Object.prototype.hasOwnProperty.call(node.config, rawKey)) {
+        state.rawValue = node.config[rawKey];
+      }
+      return state;
+    };
+
+    const buildOutputState = (nodeId, outputName) => {
+      const node = this.nodes.get(nodeId);
+      const config = node?.config || {};
+      const rawKey = `${outputName}__raw`;
+      const state = {
+        value: getOutputVar(nodeId, outputName),
+        isConnected: this.connections.some(
+          (c) => c.fromNode === nodeId && c.fromPort === outputName
+        ),
+      };
+      if (Object.prototype.hasOwnProperty.call(config, rawKey)) {
+        state.rawValue = config[rawKey];
+      }
+      if (Object.prototype.hasOwnProperty.call(config, outputName)) {
+        state.configValue = config[outputName];
+      }
+      return state;
     };
 
     order.forEach((nodeId) => {
@@ -3299,17 +3598,11 @@ export class NodeEditor {
       const inputs = {};
       const outputs = {};
       (def.inputs || []).forEach((inputName) => {
-        inputs[inputName] = getInputVar(nodeId, inputName);
+        inputs[inputName] = buildInputState(nodeId, inputName);
       });
       (def.outputs || []).forEach((outputName) => {
-        outputs[outputName] = getOutputVar(nodeId, outputName);
+        outputs[outputName] = buildOutputState(nodeId, outputName);
       });
-      const missing = (def.inputs || []).filter((inputName) => !inputs[inputName]);
-      if (missing.length) {
-        throw new Error(
-          `${node.definition.label} is missing required input: ${missing.join(', ')}`
-        );
-      }
       const script = def.script({ inputs, outputs, config: node.config });
       if (script) {
         lines.push(script);
@@ -3538,6 +3831,7 @@ export class NodeEditor {
       this._renderNode(node);
     });
     this.connections = (data.connections || []).map((connection) => ({ ...connection }));
+    this._refreshAllPortStates();
     this.resize();
     this._clearDirty();
     this._saveAutoSnapshot({ immediate: true, markClean: false });
@@ -3718,6 +4012,7 @@ export class NodeEditor {
     if (this.selectedConnection && !this.connections.includes(this.selectedConnection)) {
       this._clearConnectionSelection({ redraw: false });
     }
+    this._refreshAllPortStates();
     this._drawConnections();
     if (this.selectedNodes.has(nodeId)) {
       this.selectedNodes.delete(nodeId);
