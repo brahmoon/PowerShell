@@ -1,0 +1,27 @@
+{
+  "id": "select_local_file",
+  "label": "Select Local File",
+  "category": "Custom",
+  "execution": "powershell",
+  "inputs": [],
+  "outputs": [
+    "FullName"
+  ],
+  "constants": [
+    {
+      "key": "FullName",
+      "type": "TextBox",
+      "value": "''"
+    }
+  ],
+  "chainExecution": false,
+  "script": "{{ output.FullName }} = {{ config.FullName }}\n{{ output.FullName }}",
+  "ui": {
+    "markup": "<div class=\"custom-ui-node file-dialog-node\">\n  <div class=\"file-dialog-actions\">\n    <button type=\"button\" data-role=\"open\">ファイルを選択</button>\n    <button type=\"button\" data-role=\"clear\" class=\"secondary\">クリア</button>\n  </div>\n  <div class=\"file-dialog-path\" data-path>ファイルが未選択です</div>\n  <div class=\"file-dialog-status\" data-status></div>\n</div>",
+    "script": "const { node, controls, updateConfig, toPowerShellLiteral, helpers } = context;\nif (!controls) {\n  return;\n}\nconst openButton = controls.querySelector('[data-role=\"open\"]');\nconst clearButton = controls.querySelector('[data-role=\"clear\"]');\nconst pathLabel = controls.querySelector('[data-path]');\nconst statusLabel = controls.querySelector('[data-status]');\nconst bridge = helpers?.NodeBridge;\nconst logger = helpers?.NodeLogger || console;\nlet disposed = false;\nconst setStatus = (message, state = '') => {\n  if (disposed || !statusLabel) {\n    return;\n  }\n  statusLabel.textContent = message || '';\n  if (state) {\n    statusLabel.dataset.state = state;\n  } else {\n    delete statusLabel.dataset.state;\n  }\n};\nconst applyPath = (rawPath, { announce = true } = {}) => {\n  if (disposed) {\n    return;\n  }\n  const value = rawPath || '';\n  updateConfig('FullName__raw', value, { silent: true });\n  updateConfig('FullName', value ? toPowerShellLiteral(value) : '', { silent: false });\n  if (pathLabel) {\n    pathLabel.textContent = value || 'ファイルが未選択です';\n    if (value) {\n      pathLabel.dataset.state = 'selected';\n    } else {\n      pathLabel.dataset.state = 'empty';\n    }\n  }\n  if (clearButton) {\n    clearButton.disabled = !value;\n  }\n  if (announce) {\n    setStatus(value ? 'ファイルを選択しました。' : 'ファイルをクリアしました。', value ? 'success' : 'info');\n  }\n};\napplyPath(node?.config?.FullName__raw || '', { announce: false });\nconst buildScript = () => [\n  'Add-Type -AssemblyName System.Windows.Forms',\n  'Add-Type -AssemblyName System.Drawing',\n  '$dialog = New-Object System.Windows.Forms.OpenFileDialog',\n  '$dialog.Filter = \"すべてのファイル (*.*)|*.*\"',\n  'if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {',\n  '  @{ ok = $true; fullName = $dialog.FileName } | ConvertTo-Json -Compress',\n  '} else {',\n  '  @{ ok = $false; cancelled = $true } | ConvertTo-Json -Compress',\n  '}'\n].join('\\n');\nconst handleOpen = async () => {\n  if (!bridge?.requestJson) {\n    setStatus('PowerShell ブリッジが利用できません。', 'error');\n    return;\n  }\n  if (openButton) {\n    openButton.disabled = true;\n  }\n  setStatus('ダイアログを開いています…', 'pending');\n  try {\n    const result = await bridge.requestJson(buildScript());\n    if (disposed) {\n      return;\n    }\n    if (!result) {\n      throw new Error('PowerShell から応答がありません。');\n    }\n    if (result.ok && result.fullName) {\n      applyPath(result.fullName);\n    } else if (result.cancelled) {\n      setStatus('キャンセルしました。', 'info');\n    } else {\n      const errorMessage = result.error || 'ファイルを取得できませんでした。';\n      throw new Error(errorMessage);\n    }\n  } catch (error) {\n    if (!disposed) {\n      setStatus(`失敗しました: ${error?.message || error}`, 'error');\n      logger?.error?.('File selection failed', error);\n    }\n  } finally {\n    if (!disposed && openButton) {\n      openButton.disabled = false;\n    }\n  }\n};\nconst handleClear = () => {\n  applyPath('', { announce: true });\n};\nopenButton?.addEventListener('click', handleOpen);\nclearButton?.addEventListener('click', handleClear);\nreturn () => {\n  disposed = true;\n  openButton?.removeEventListener('click', handleOpen);\n  clearButton?.removeEventListener('click', handleClear);\n};",
+    "style": ".file-dialog-node {\n  display: flex;\n  flex-direction: column;\n  gap: 0.5rem;\n}\n.file-dialog-actions {\n  display: flex;\n  gap: 0.5rem;\n}\n.file-dialog-actions button {\n  padding: 0.4rem 0.9rem;\n  border-radius: 0.5rem;\n  border: none;\n  cursor: pointer;\n  background: #2563eb;\n  color: #fff;\n}\n.file-dialog-actions button.secondary {\n  background: #f3f4f6;\n  color: #111827;\n}\n.file-dialog-actions button:disabled {\n  opacity: 0.6;\n  cursor: not-allowed;\n}\n.file-dialog-path {\n  min-height: 1.5rem;\n  padding: 0.35rem 0.5rem;\n  border-radius: 0.5rem;\n  background: rgba(59, 130, 246, 0.12);\n  word-break: break-all;\n  font-family: var(--font-family-mono, Consolas, 'Courier New', monospace);\n}\n.file-dialog-path[data-state='empty'] {\n  color: #6b7280;\n  background: #f9fafb;\n}\n.file-dialog-status {\n  min-height: 1.25rem;\n  font-size: 0.85rem;\n  color: #4b5563;\n}\n.file-dialog-status[data-state='success'] {\n  color: #047857;\n}\n.file-dialog-status[data-state='error'] {\n  color: #dc2626;\n}\n.file-dialog-status[data-state='pending'] {\n  color: #1d4ed8;\n}\n.file-dialog-status[data-state='info'] {\n  color: #0f172a;\n}"
+  },
+  "description": "PowerShell で OpenFileDialog を開き、選択したファイルのフルパスを取得して出力します。",
+  "createdAt": "2024-05-10T00:00:00.000Z",
+  "updatedAt": "2024-05-10T00:00:00.000Z"
+}
