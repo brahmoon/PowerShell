@@ -110,7 +110,6 @@ const ensureConsole = () => {
     <header class="run-console__header">
       <button type="button" class="run-console__toggle" data-role="toggle" aria-expanded="false" aria-controls="run-console-body">▴</button>
       <div class="run-console__titles">
-        <span class="run-console__title">PowerShell Debug Console</span>
         <span class="run-console__context" data-role="context">全ノードを実行</span>
       </div>
       <span class="run-console__status" data-role="status">待機中</span>
