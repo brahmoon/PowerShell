@@ -104,6 +104,9 @@ export class NodeEditor {
     this._autoSaveTimer = null;
     this._autoGraphRestored = false;
 
+    this._autoSaveTimer = null;
+    this._autoGraphRestored = false;
+
     this.electronAPI = typeof window !== 'undefined' ? window.electronAPI : null;
 
     this.ctx = this.connectionLayer.getContext('2d');

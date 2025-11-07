@@ -277,6 +277,9 @@ export function runScriptWithDialog(
   setCollapsed(false);
   applyHeight(state.height);
 
+  setCollapsed(false);
+  applyHeight(state.height);
+
   const execute = async () => {
     state.renderOutput?.('', []);
     if (elements.rerun) {
