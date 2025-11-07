@@ -91,6 +91,12 @@
           <span class="node-label"></span>
           <div class="node-actions">
             <button
+              class="node-run"
+              title="このノードまで実行"
+              type="button"
+              aria-label="このノードまで実行"
+            >▷</button>
+            <button
               class="node-open-designer"
               title="カスタムノードエディタを開く"
               type="button"
@@ -368,6 +374,11 @@ updateConfig('SelectedItems', literal);</code></pre>
       import { BUILTIN_NODES } from './core/builtinNodes.js';
       import { NodeEditor } from './core/nodeEngine.js';
       import { loadGraph, saveGraph, clearGraph } from './storage/fileStore.js';
+      import {
+        loadLocalGraph,
+        saveLocalGraph,
+        clearLocalGraph,
+      } from './storage/localGraphStore.js';
       import { exportScript } from './export/scriptExport.js';
       import {
         runScriptWithDialog,
@@ -622,7 +633,16 @@ updateConfig('SelectedItems', literal);</code></pre>
           ?.querySelectorAll('[data-execution]')
           .forEach((section) => {
             const target = section.dataset.execution;
-            section.hidden = !(target === mode || target === 'both' || target === 'shared');
+            const shouldShow = target === mode || target === 'both' || target === 'shared';
+            section.hidden = !shouldShow;
+            section.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+            section.style.display = shouldShow ? '' : 'none';
+            section.classList.toggle('is-hidden', !shouldShow);
+            section
+              .querySelectorAll('input, textarea, select, button')
+              .forEach((control) => {
+                control.disabled = !shouldShow;
+              });
           });
       };
 
@@ -1267,8 +1287,13 @@ updateConfig('SelectedItems', literal);</code></pre>
         nodeTemplate,
         library: buildLibraryDefinitions(),
         onGenerateScript: exportScript,
-        onRunScript: (script) =>
-          runScriptWithDialog(script, { serverUrl: powerShellServerUrl }),
+        onRunScript: (script, meta = {}) =>
+          runScriptWithDialog(script, {
+            serverUrl: powerShellServerUrl,
+            contextLabel: meta?.context?.targetLabel,
+            targetNodeId: meta?.context?.targetNodeId,
+            nodeIds: meta?.context?.nodeIds,
+          }),
         onEditCustomNode: openDesignerForSpec,
         onDuplicatePaletteNode: async ({ definitionId }) => {
           const saved = await duplicateCustomNodeById(definitionId);
@@ -1303,13 +1328,38 @@ updateConfig('SelectedItems', literal);</code></pre>
           load: loadGraph,
           save: saveGraph,
           clear: clearGraph,
+          autoLoad: loadLocalGraph,
+          autoSave: saveLocalGraph,
+          autoClear: clearLocalGraph,
         },
       });
 
       window.addEventListener('resize', () => editor.resize());
 
       exportButton?.addEventListener('click', () => editor.exportScript());
-      runButton?.addEventListener('click', () => editor.runScript());
+      runButton?.addEventListener('click', async () => {
+        const selectedIds = editor.getSelectedNodeIds?.() || [];
+        const executable = selectedIds.filter((nodeId) => {
+          const node = editor.getNodeById?.(nodeId);
+          return node?.definition?.execution !== 'ui';
+        });
+
+        if (executable.length === 1) {
+          try {
+            await editor.runNodeScript(executable[0], { includeUpstream: true });
+          } catch (error) {
+            alert(error?.message || String(error));
+          }
+          return;
+        }
+
+        if (executable.length > 1) {
+          showToast('複数のPowerShellノードが選択されています。ノード内の▷ボタンで実行してください。');
+          return;
+        }
+
+        showToast('PowerShellノードを選択するか、ノード内の▷ボタンで実行してください。');
+      });
       document.getElementById('save-flow').addEventListener('click', () => editor.persistGraph());
       document.getElementById('load-flow').addEventListener('click', () => editor.restoreGraph());
       document.getElementById('clear-flow').addEventListener('click', () => editor.clearGraph());

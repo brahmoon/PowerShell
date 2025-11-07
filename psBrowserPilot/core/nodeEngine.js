@@ -99,6 +99,10 @@ export class NodeEditor {
     this._paletteMenuOutsideHandler = null;
 
     this._autoExecutionPromises = new Map();
+    this._executingNodes = new Set();
+
+    this._autoSaveTimer = null;
+    this._autoGraphRestored = false;
 
     this.electronAPI = typeof window !== 'undefined' ? window.electronAPI : null;
 
@@ -111,6 +115,26 @@ export class NodeEditor {
     this.setLibrary(library || [], { persist: false });
     this.resize();
     this._applyViewport();
+
+    this.restoreAutoGraph();
+  }
+
+  _escapeSelector(value) {
+    if (typeof value !== 'string') {
+      return '';
+    }
+    if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') {
+      return window.CSS.escape(value);
+    }
+    return value.replace(/([\.\#\[\]\s:"'\\])/g, '\\$1');
+  }
+
+  _getNodeElement(nodeId) {
+    if (!nodeId) {
+      return null;
+    }
+    const escaped = this._escapeSelector(String(nodeId));
+    return this.nodeLayer.querySelector(`.node[data-id="${escaped}"]`);
   }
 
   _makePaletteId(prefix) {
@@ -437,10 +461,12 @@ export class NodeEditor {
 
   _markDirty() {
     this.isDirty = true;
+    this._scheduleAutoSave();
   }
 
   _clearDirty() {
     this.isDirty = false;
+    this._cancelAutoSave();
   }
 
   setLibrary(definitions, { persist = true } = {}) {
@@ -1712,6 +1738,22 @@ export class NodeEditor {
       }
     }
 
+    const runBtn = el.querySelector('.node-run');
+    if (runBtn) {
+      if (node.definition.execution === 'ui') {
+        runBtn.remove();
+      } else {
+        runBtn.addEventListener('click', async (event) => {
+          event.stopPropagation();
+          try {
+            await this.runNodeScript(node.id, { includeUpstream: true });
+          } catch (error) {
+            alert(error?.message || String(error));
+          }
+        });
+      }
+    }
+
     const inputContainer = el.querySelector('.inputs');
     (node.definition.inputs || []).forEach((name) => {
       const port = this._createPort('input', name, node.id);
@@ -1809,7 +1851,7 @@ export class NodeEditor {
       .map((id) => {
         const item = this.nodes.get(id);
         if (!item) return null;
-        const el = this.nodeLayer.querySelector(`.node[data-id="${id}"]`);
+        const el = this._getNodeElement(id);
         const width = el?.offsetWidth ?? 200;
         const height = el?.offsetHeight ?? 120;
         return {
@@ -1968,7 +2010,7 @@ export class NodeEditor {
     event.stopPropagation();
     event.preventDefault();
     const rect = this.nodeLayer.getBoundingClientRect();
-    const nodeEl = this.nodeLayer.querySelector(`.node[data-id="${nodeId}"]`);
+    const nodeEl = this._getNodeElement(nodeId);
     if (!nodeEl) return;
     const portEl = event.currentTarget;
     const portRect = portEl.getBoundingClientRect();
@@ -2091,7 +2133,7 @@ export class NodeEditor {
   }
 
   _getPortPosition(nodeId, portName, type) {
-    const nodeEl = this.nodeLayer.querySelector(`.node[data-id="${nodeId}"]`);
+    const nodeEl = this._getNodeElement(nodeId);
     if (!nodeEl) return null;
     const selector = `.port[data-port="${portName}"][data-type="${type}"] .handle`;
     const handle = nodeEl.querySelector(selector);
@@ -2256,9 +2298,10 @@ export class NodeEditor {
   }
 
   _syncControlDisplay(nodeId, key, displayValue) {
-    const nodeEl = this.nodeLayer.querySelector(`.node[data-id='${nodeId}']`);
+    const nodeEl = this._getNodeElement(nodeId);
     if (!nodeEl) return;
-    const elements = nodeEl.querySelectorAll(`[data-control-key='${key}']`);
+    const escapedKey = this._escapeSelector(String(key));
+    const elements = nodeEl.querySelectorAll(`[data-control-key="${escapedKey}"]`);
     if (!elements.length) return;
     const value = displayValue !== undefined ? displayValue : this.nodes.get(nodeId)?.config[key] ?? '';
     elements.forEach((element) => {
@@ -2460,13 +2503,23 @@ export class NodeEditor {
     await this._executeAutoNode(nodeId);
   }
 
-  async _runChainExecutions() {
+  async _runChainExecutions({ limitTo = null } = {}) {
     if (!this.nodes.size) {
       return;
     }
 
+    const limitSet =
+      limitTo instanceof Set
+        ? limitTo
+        : Array.isArray(limitTo)
+        ? new Set(limitTo)
+        : null;
+
     const chainNodes = [];
     this.nodes.forEach((node, nodeId) => {
+      if (limitSet && !limitSet.has(nodeId)) {
+        return;
+      }
       if (node?.definition?.chainExecution && typeof node.definition.autoExecute === 'function') {
         chainNodes.push(nodeId);
       }
@@ -2483,6 +2536,57 @@ export class NodeEditor {
         await this.runAutoNode(nodeId, { includeUpstream: true });
       }
     }
+  }
+
+  _resolveExecutableNodes(scopeSet = null) {
+    const order = this._topologicalSort();
+    const targets = [];
+    order.forEach((nodeId) => {
+      if (scopeSet && !scopeSet.has(nodeId)) {
+        return;
+      }
+      const node = this.nodes.get(nodeId);
+      if (!node || node.definition?.execution === 'ui') {
+        return;
+      }
+      targets.push(nodeId);
+    });
+    return targets;
+  }
+
+  _setNodesExecuting(nodeIds, executing) {
+    const ids = nodeIds instanceof Set ? Array.from(nodeIds) : Array.from(nodeIds || []);
+    if (!ids.length) {
+      return;
+    }
+    ids.forEach((nodeId) => {
+      if (!this.nodes.has(nodeId)) {
+        return;
+      }
+      const node = this.nodes.get(nodeId);
+      if (node?.definition?.execution === 'ui') {
+        return;
+      }
+      const el = this._getNodeElement(nodeId);
+      if (!el) {
+        return;
+      }
+      if (executing) {
+        el.classList.add('is-executing');
+        this._executingNodes.add(nodeId);
+      } else {
+        el.classList.remove('is-executing');
+        this._executingNodes.delete(nodeId);
+      }
+    });
+  }
+
+  _clearExecutingNodes() {
+    if (!this._executingNodes.size) {
+      return;
+    }
+    const ids = Array.from(this._executingNodes);
+    this._setNodesExecuting(ids, false);
   }
 
   resolveInputValue(nodeId, inputName, { preferRaw = false } = {}) {
@@ -3014,6 +3118,50 @@ export class NodeEditor {
     });
   }
 
+  _buildIncomingMap() {
+    const map = new Map();
+    this.connections.forEach((connection) => {
+      const { fromNode, toNode } = connection;
+      if (!this.nodes.has(fromNode) || !this.nodes.has(toNode)) {
+        return;
+      }
+      if (!map.has(toNode)) {
+        map.set(toNode, new Set());
+      }
+      map.get(toNode).add(fromNode);
+    });
+    return map;
+  }
+
+  _collectExecutionNodes(targetNodeId, { includeUpstream = true } = {}) {
+    const result = new Set();
+    if (!targetNodeId || !this.nodes.has(targetNodeId)) {
+      return result;
+    }
+
+    const incoming = includeUpstream ? this._buildIncomingMap() : null;
+    const stack = [targetNodeId];
+    while (stack.length) {
+      const current = stack.pop();
+      if (!this.nodes.has(current) || result.has(current)) {
+        continue;
+      }
+      result.add(current);
+      if (!includeUpstream) {
+        continue;
+      }
+      const parents = incoming.get(current);
+      if (parents) {
+        parents.forEach((parentId) => {
+          if (!result.has(parentId)) {
+            stack.push(parentId);
+          }
+        });
+      }
+    }
+    return result;
+  }
+
   _topologicalSort() {
     const graph = new Map();
     const indegree = new Map();
@@ -3049,9 +3197,38 @@ export class NodeEditor {
     return order;
   }
 
-  generateScript() {
+  _buildRunContext({ scopeSet = null, targetNodeId = null } = {}) {
+    const nodeIds = scopeSet
+      ? Array.from(scopeSet)
+      : Array.from(this.nodes.keys());
+    let targetLabel = '';
+    if (targetNodeId) {
+      const node = this.nodes.get(targetNodeId);
+      targetLabel = node?.definition?.label || targetNodeId;
+    }
+    return {
+      type: targetNodeId ? 'node' : 'all',
+      targetNodeId: targetNodeId || null,
+      targetLabel,
+      nodeIds,
+    };
+  }
+
+  generateScript(options = {}) {
+    const { targetNodeId = null, includeUpstream = true, allowedNodes = null } = options;
+    let scopeSet = null;
+    if (allowedNodes instanceof Set) {
+      scopeSet = allowedNodes;
+    } else if (targetNodeId) {
+      scopeSet = this._collectExecutionNodes(targetNodeId, { includeUpstream });
+    }
+
     if (!this.nodes.size) {
       return wrapPowerShellScript('# No nodes in the workspace');
+    }
+
+    if (scopeSet && !scopeSet.size) {
+      return wrapPowerShellScript('# No executable nodes in the selected scope');
     }
 
     const order = this._topologicalSort();
@@ -3104,6 +3281,9 @@ export class NodeEditor {
     };
 
     order.forEach((nodeId) => {
+      if (scopeSet && !scopeSet.has(nodeId)) {
+        return;
+      }
       const node = this.nodes.get(nodeId);
       if (!node) return;
       const def = nodeDefs[node.type];
@@ -3131,6 +3311,10 @@ export class NodeEditor {
       }
     });
 
+    if (!lines.length) {
+      return wrapPowerShellScript('# No executable nodes in the selected scope');
+    }
+
     return wrapPowerShellScript(lines.join('\n\n'));
   }
 
@@ -3149,30 +3333,143 @@ export class NodeEditor {
     }
   }
 
-  async runScript() {
+  async runScript(options = {}) {
     if (typeof this.onRunScript !== 'function') {
       await this.exportScript();
       return;
     }
 
+    const { allowedNodes = null, targetNodeId = null, includeUpstream = true } = options;
+    this._clearExecutingNodes();
+    let highlightIds = [];
+    let highlightApplied = false;
+
     try {
-      await this._runChainExecutions();
-      const script = this.generateScript();
-      const result = this.onRunScript(script);
+      let scopeSet = null;
+      if (allowedNodes instanceof Set) {
+        scopeSet = allowedNodes;
+      } else if (targetNodeId) {
+        scopeSet = this._collectExecutionNodes(targetNodeId, { includeUpstream });
+        if (!scopeSet.size) {
+          throw new Error('実行対象のノードが見つかりません。');
+        }
+      }
+
+      highlightIds = this._resolveExecutableNodes(scopeSet);
+      if (highlightIds.length) {
+        this._setNodesExecuting(highlightIds, true);
+        highlightApplied = true;
+      }
+
+      if (scopeSet) {
+        await this._runChainExecutions({ limitTo: scopeSet });
+      } else {
+        await this._runChainExecutions();
+      }
+
+      const script = this.generateScript({
+        allowedNodes: scopeSet,
+        targetNodeId,
+        includeUpstream,
+      });
+      const context = this._buildRunContext({ scopeSet, targetNodeId });
+      const result = this.onRunScript(script, { context });
       if (result && typeof result.then === 'function') {
         await result;
       }
     } catch (error) {
       alert(error?.message || String(error));
+    } finally {
+      if (highlightApplied && highlightIds.length) {
+        this._setNodesExecuting(highlightIds, false);
+      }
+      this._clearExecutingNodes();
     }
+  }
+
+  async runNodeScript(nodeId, { includeUpstream = true } = {}) {
+    const node = this.nodes.get(nodeId);
+    if (!node) {
+      throw new Error('指定されたノードが見つかりません。');
+    }
+    if (node.definition?.execution === 'ui') {
+      throw new Error('GUIノードはPowerShellとして実行できません。');
+    }
+
+    const scopeSet = this._collectExecutionNodes(nodeId, { includeUpstream });
+    if (!scopeSet.size) {
+      throw new Error('実行対象のノードが見つかりません。');
+    }
+
+    return this.runScript({ allowedNodes: scopeSet, targetNodeId: nodeId, includeUpstream });
+  }
+
+  _getGraphSnapshot() {
+    return {
+      nodes: Array.from(this.nodes.values()).map((node) => node.serialize()),
+      connections: this.connections.map((connection) => ({ ...connection })),
+    };
+  }
+
+  _cancelAutoSave() {
+    if (this._autoSaveTimer) {
+      clearTimeout(this._autoSaveTimer);
+      this._autoSaveTimer = null;
+    }
+  }
+
+  _saveAutoSnapshot({ immediate = false, markClean = true, allowedNodes = null } = {}) {
+    if (!this.persistence?.autoSave) {
+      return;
+    }
+
+    const performSave = () => {
+      this._autoSaveTimer = null;
+      const graph = this._getGraphSnapshot();
+      if (allowedNodes instanceof Set) {
+        graph.nodes = graph.nodes.filter((node) => allowedNodes.has(node.id));
+        graph.connections = graph.connections.filter(
+          (connection) =>
+            allowedNodes.has(connection.fromNode) && allowedNodes.has(connection.toNode)
+        );
+      }
+      try {
+        const result = this.persistence.autoSave(graph);
+        if (result && typeof result.then === 'function') {
+          result
+            .then((success) => {
+              if (success !== false && markClean) {
+                this._clearDirty();
+              }
+            })
+            .catch((error) => console.warn('Failed to autosave graph', error));
+        } else if (result !== false && markClean) {
+          this._clearDirty();
+        }
+      } catch (error) {
+        console.warn('Failed to autosave graph', error);
+      }
+    };
+
+    if (immediate) {
+      performSave();
+      return;
+    }
+
+    this._cancelAutoSave();
+    this._autoSaveTimer = window.setTimeout(performSave, 400);
+  }
+
+  _scheduleAutoSave() {
+    if (!this.persistence?.autoSave || !this.isDirty) {
+      return;
+    }
+    this._saveAutoSnapshot({ immediate: false, markClean: true });
   }
 
   persistGraph() {
     if (!this.persistence?.save) return;
-    const graph = {
-      nodes: Array.from(this.nodes.values()).map((node) => node.serialize()),
-      connections: this.connections.map((connection) => ({ ...connection })),
-    };
+    const graph = this._getGraphSnapshot();
     try {
       const result = this.persistence.save(graph);
       if (result && typeof result.then === 'function') {
@@ -3201,6 +3498,28 @@ export class NodeEditor {
     }
   }
 
+  restoreAutoGraph() {
+    if (this._autoGraphRestored) {
+      return;
+    }
+    this._autoGraphRestored = true;
+    if (!this.persistence?.autoLoad) {
+      return;
+    }
+    try {
+      const result = this.persistence.autoLoad();
+      if (result && typeof result.then === 'function') {
+        result
+          .then((data) => this._applyPersistedGraph(data))
+          .catch((error) => console.warn('Failed to restore autosaved graph', error));
+      } else {
+        this._applyPersistedGraph(result);
+      }
+    } catch (error) {
+      console.warn('Failed to restore autosaved graph', error);
+    }
+  }
+
   _applyPersistedGraph(data) {
     if (!data) return;
     this.clearGraph(false);
@@ -3216,6 +3535,7 @@ export class NodeEditor {
     this.connections = (data.connections || []).map((connection) => ({ ...connection }));
     this.resize();
     this._clearDirty();
+    this._saveAutoSnapshot({ immediate: true, markClean: false });
   }
 
   clearGraph(clearStorage = true) {
@@ -3236,11 +3556,21 @@ export class NodeEditor {
     if (clearStorage && this.persistence?.clear) {
       this.persistence.clear();
     }
+    if (clearStorage && this.persistence?.autoClear) {
+      try {
+        this.persistence.autoClear();
+      } catch (error) {
+        console.warn('Failed to clear autosaved graph', error);
+      }
+    }
     this.selectedNodes.clear();
     this._applySelectionStyles();
     this.selectedConnection = null;
     this.connectionPaths = [];
     this._hidePortContextMenu();
+    if (clearStorage) {
+      this._cancelAutoSave();
+    }
     if (clearStorage) {
       this._markDirty();
     } else {
@@ -3348,6 +3678,14 @@ export class NodeEditor {
     this._applySelectionStyles();
   }
 
+  getSelectedNodeIds() {
+    return Array.from(this.selectedNodes);
+  }
+
+  getNodeById(nodeId) {
+    return this.nodes.get(nodeId) || null;
+  }
+
   _removeNodes(nodeIds) {
     nodeIds.forEach((nodeId) => this._removeNode(nodeId, { markDirty: false }));
     this._markDirty();
@@ -3364,7 +3702,8 @@ export class NodeEditor {
       }
     }
     this.nodes.delete(nodeId);
-    const el = this.nodeLayer.querySelector(`.node[data-id="${nodeId}"]`);
+    this._executingNodes.delete(nodeId);
+    const el = this._getNodeElement(nodeId);
     if (el) {
       el.remove();
     }
