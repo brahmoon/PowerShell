@@ -224,6 +224,14 @@ const normalizeSpec = (spec, previous = null) => {
     createdAt: previous?.createdAt || spec?.createdAt || now,
     updatedAt: spec?.updatedAt || previous?.updatedAt || now,
   };
+  const preserveSource =
+    spec && Object.prototype.hasOwnProperty.call(spec, 'preserveConfigKeys')
+      ? spec.preserveConfigKeys
+      : previous?.preserveConfigKeys;
+  const preserveConfigKeys = normalizeList(preserveSource);
+  if (preserveConfigKeys.length) {
+    normalized.preserveConfigKeys = preserveConfigKeys;
+  }
   if (!normalized.id) {
     normalized.id = `custom_node_${Date.now()}`;
   }
@@ -1590,6 +1598,12 @@ export const specsToDefinitions = (specs) =>
 
       if (normalized.execution === 'ui') {
         definition.render = createUiRenderer(normalized);
+      }
+
+      if (Array.isArray(normalized.preserveConfigKeys) && normalized.preserveConfigKeys.length) {
+        definition.preserveConfigKeys = normalized.preserveConfigKeys
+          .map((key) => (typeof key === 'string' ? key.trim() : ''))
+          .filter(Boolean);
       }
 
       if (Object.keys(initialConfig).length) {
