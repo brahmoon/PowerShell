@@ -34,7 +34,7 @@ export function saveServerUrl(url) {
 function setStatus(statusEl, message, state = '') {
   if (!statusEl) return;
   statusEl.textContent = message;
-  const base = 'run-dialog__status';
+  const base = 'run-console__status';
   statusEl.className = state ? `${base} is-${state}` : base;
 }
 
@@ -43,69 +43,229 @@ function formatEndpoint(baseUrl) {
   return `${normalized.replace(/\/+$/, '')}/runScript`;
 }
 
-export function runScriptWithDialog(script, { serverUrl } = {}) {
-  const endpoint = formatEndpoint(serverUrl);
-  const dialog = document.createElement('dialog');
-  dialog.className = 'run-dialog';
-  dialog.innerHTML = `
-    <form method="dialog" class="run-dialog__form">
-      <header class="run-dialog__header">
-        <h2>PowerShell Script Runner</h2>
-        <p class="run-dialog__server">エンドポイント: <code data-role="server"></code></p>
-        <p class="run-dialog__status" data-role="status">PowerShell にスクリプトを送信しています…</p>
-      </header>
-      <section class="run-dialog__body">
-        <pre class="run-dialog__output" data-role="output">(出力はありません)</pre>
-        <div class="run-dialog__errors" data-role="errors"></div>
-        <details class="run-dialog__details">
-          <summary>生成されたスクリプトを表示</summary>
-          <textarea readonly class="run-dialog__script" data-role="script"></textarea>
-        </details>
-      </section>
-      <menu class="run-dialog__actions">
-        <button value="close">閉じる</button>
+const DEFAULT_PANEL_HEIGHT = 280;
+const MIN_PANEL_HEIGHT = 160;
+const COLLAPSED_HEIGHT = 52;
+
+const panelState = {
+  container: null,
+  elements: {},
+  height: DEFAULT_PANEL_HEIGHT,
+  isCollapsed: true,
+  currentScript: '',
+  currentEndpoint: '',
+  execute: null,
+};
+
+const updateBodyOffset = (height, collapsed) => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  const offset = collapsed ? COLLAPSED_HEIGHT : height;
+  document.body.classList.add('has-run-console');
+  document.body.classList.toggle('run-console-collapsed', collapsed);
+  document.body.style.setProperty('--run-console-height', `${Math.round(height)}px`);
+  document.body.style.setProperty('--run-console-offset', `${Math.round(offset)}px`);
+};
+
+const applyHeight = (height) => {
+  const maxHeight = Math.max(MIN_PANEL_HEIGHT, Math.min(height, window.innerHeight - 120));
+  panelState.height = maxHeight;
+  if (panelState.container && !panelState.isCollapsed) {
+    panelState.container.style.height = `${maxHeight}px`;
+    updateBodyOffset(maxHeight, false);
+  }
+};
+
+const setCollapsed = (collapsed) => {
+  panelState.isCollapsed = collapsed;
+  const { container, elements } = panelState;
+  if (!container) {
+    return;
+  }
+  container.classList.toggle('is-collapsed', collapsed);
+  if (collapsed) {
+    container.style.height = '';
+  } else {
+    container.style.height = `${panelState.height}px`;
+  }
+  if (elements.toggle) {
+    elements.toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    elements.toggle.textContent = collapsed ? '▴' : '▾';
+  }
+  updateBodyOffset(panelState.height, collapsed);
+};
+
+const ensureConsole = () => {
+  if (panelState.container) {
+    return panelState;
+  }
+
+  const container = document.createElement('section');
+  container.className = 'run-console is-collapsed';
+  container.setAttribute('role', 'region');
+  container.setAttribute('aria-label', 'PowerShell 実行コンソール');
+  container.innerHTML = `
+    <div class="run-console__resize" data-role="resize" title="ドラッグでサイズ変更"></div>
+    <header class="run-console__header">
+      <button type="button" class="run-console__toggle" data-role="toggle" aria-expanded="false" aria-controls="run-console-body">▴</button>
+      <div class="run-console__titles">
+        <span class="run-console__title">PowerShell Debug Console</span>
+        <span class="run-console__context" data-role="context">全ノードを実行</span>
+      </div>
+      <span class="run-console__status" data-role="status">待機中</span>
+      <span class="run-console__server" data-role="server"></span>
+      <div class="run-console__actions">
         <button type="button" class="secondary" data-action="copy-output">出力をコピー</button>
         <button type="button" class="secondary" data-action="copy-script">スクリプトをコピー</button>
         <button type="button" class="primary" data-action="rerun">再実行</button>
-      </menu>
-    </form>
+      </div>
+    </header>
+    <div class="run-console__body" id="run-console-body">
+      <div class="run-console__section">
+        <h3>出力</h3>
+        <pre class="run-console__output" data-role="output">(出力はありません)</pre>
+      </div>
+      <div class="run-console__section">
+        <h3>エラー</h3>
+        <pre class="run-console__errors" data-role="errors"></pre>
+      </div>
+      <details class="run-console__details" open>
+        <summary>生成されたスクリプトを表示</summary>
+        <textarea readonly class="run-console__script" data-role="script"></textarea>
+      </details>
+    </div>
   `;
 
-  document.body.appendChild(dialog);
+  document.body.appendChild(container);
+  document.body.classList.add('has-run-console');
 
-  const statusEl = dialog.querySelector('[data-role="status"]');
-  const serverEl = dialog.querySelector('[data-role="server"]');
-  const outputEl = dialog.querySelector('[data-role="output"]');
-  const errorsEl = dialog.querySelector('[data-role="errors"]');
-  const scriptEl = dialog.querySelector('[data-role="script"]');
-  const rerunButton = dialog.querySelector('[data-action="rerun"]');
-  const copyOutputButton = dialog.querySelector('[data-action="copy-output"]');
-  const copyScriptButton = dialog.querySelector('[data-action="copy-script"]');
+  const elements = {
+    toggle: container.querySelector('[data-role="toggle"]'),
+    resize: container.querySelector('[data-role="resize"]'),
+    status: container.querySelector('[data-role="status"]'),
+    server: container.querySelector('[data-role="server"]'),
+    context: container.querySelector('[data-role="context"]'),
+    output: container.querySelector('[data-role="output"]'),
+    errors: container.querySelector('[data-role="errors"]'),
+    script: container.querySelector('[data-role="script"]'),
+    rerun: container.querySelector('[data-action="rerun"]'),
+    copyOutput: container.querySelector('[data-action="copy-output"]'),
+    copyScript: container.querySelector('[data-action="copy-script"]'),
+  };
 
-  if (scriptEl) {
-    scriptEl.value = script;
+  elements.toggle?.addEventListener('click', () => {
+    setCollapsed(!panelState.isCollapsed);
+    if (!panelState.isCollapsed) {
+      applyHeight(panelState.height);
+    }
+  });
+
+  elements.resize?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    if (panelState.isCollapsed) {
+      setCollapsed(false);
+    }
+    const startHeight = panelState.height;
+    const startY = event.clientY;
+    const handleMove = (moveEvent) => {
+      const delta = moveEvent.clientY - startY;
+      applyHeight(startHeight - delta);
+    };
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+  });
+
+  elements.rerun?.addEventListener('click', () => {
+    panelState.execute?.();
+  });
+
+  elements.copyScript?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(panelState.currentScript || '');
+      setStatus(panelState.elements.status, 'スクリプトをコピーしました。', 'info');
+    } catch (error) {
+      setStatus(panelState.elements.status, `コピーに失敗しました: ${error.message}`, 'error');
+    }
+  });
+
+  elements.copyOutput?.addEventListener('click', async () => {
+    const text = panelState.elements.output?.textContent || '';
+    if (!text || text === '(出力はありません)') {
+      setStatus(panelState.elements.status, 'コピーできる出力がありません。', 'info');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus(panelState.elements.status, '出力をコピーしました。', 'info');
+    } catch (error) {
+      setStatus(panelState.elements.status, `コピーに失敗しました: ${error.message}`, 'error');
+    }
+  });
+
+  panelState.container = container;
+  panelState.elements = elements;
+  panelState.height = DEFAULT_PANEL_HEIGHT;
+  setCollapsed(true);
+  updateBodyOffset(panelState.height, true);
+
+  return panelState;
+};
+
+export function runScriptWithDialog(
+  script,
+  { serverUrl, contextLabel, targetNodeId, nodeIds } = {}
+) {
+  const endpoint = formatEndpoint(serverUrl);
+  const state = ensureConsole();
+  const { elements } = state;
+
+  state.currentScript = script;
+  state.currentEndpoint = endpoint;
+  state.targetNodeId = targetNodeId || null;
+  state.nodeIds = Array.isArray(nodeIds) ? [...nodeIds] : null;
+
+  if (elements.script) {
+    elements.script.value = script;
   }
-  if (serverEl) {
-    serverEl.textContent = endpoint;
+  if (elements.server) {
+    elements.server.textContent = `エンドポイント: ${endpoint}`;
   }
+  if (elements.context) {
+    const label = contextLabel || targetNodeId || '';
+    elements.context.textContent = label ? `ノード: ${label}` : '全ノードを実行';
+  }
+  if (elements.output) {
+    elements.output.textContent = '(出力はありません)';
+  }
+  if (elements.errors) {
+    elements.errors.textContent = '';
+  }
+
+  setCollapsed(false);
+  applyHeight(state.height);
 
   const execute = async () => {
-    if (outputEl) {
-      outputEl.textContent = '(出力はありません)';
+    if (elements.output) {
+      elements.output.textContent = '(出力はありません)';
     }
-    if (errorsEl) {
-      errorsEl.textContent = '';
+    if (elements.errors) {
+      elements.errors.textContent = '';
     }
-    if (rerunButton) {
-      rerunButton.disabled = true;
+    if (elements.rerun) {
+      elements.rerun.disabled = true;
     }
-    setStatus(statusEl, 'PowerShell にスクリプトを送信しています…', 'pending');
+    setStatus(elements.status, 'PowerShell にスクリプトを送信しています…', 'pending');
 
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetch(state.currentEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({ script }),
+        body: JSON.stringify({ script: state.currentScript }),
       });
 
       let json;
@@ -121,67 +281,35 @@ export function runScriptWithDialog(script, { serverUrl } = {}) {
       }
 
       const hasErrors = json?.ok === false || (Array.isArray(json?.errors) && json.errors.length);
-      if (outputEl) {
+      if (elements.output) {
         const text = json?.output;
-        outputEl.textContent = text && String(text).trim() ? String(text) : '(出力はありません)';
+        elements.output.textContent = text && String(text).trim() ? String(text) : '(出力はありません)';
       }
-      if (errorsEl) {
+      if (elements.errors) {
         if (Array.isArray(json?.errors) && json.errors.length) {
-          errorsEl.textContent = json.errors.join('\n');
+          elements.errors.textContent = json.errors.join('\n');
         } else {
-          errorsEl.textContent = '';
+          elements.errors.textContent = '';
         }
       }
 
       if (hasErrors) {
-        setStatus(statusEl, 'PowerShell がエラーを返しました。', 'error');
+        setStatus(elements.status, 'PowerShell がエラーを返しました。', 'error');
       } else {
-        setStatus(statusEl, 'PowerShell での実行が完了しました。', 'success');
+        setStatus(elements.status, 'PowerShell での実行が完了しました。', 'success');
       }
     } catch (error) {
-      if (errorsEl) {
-        errorsEl.textContent = error.message;
+      if (elements.errors) {
+        elements.errors.textContent = error.message;
       }
-      setStatus(statusEl, 'サーバーへの接続に失敗しました。', 'error');
+      setStatus(elements.status, 'サーバーへの接続に失敗しました。', 'error');
     } finally {
-      if (rerunButton) {
-        rerunButton.disabled = false;
+      if (elements.rerun) {
+        elements.rerun.disabled = false;
       }
     }
   };
 
-  rerunButton?.addEventListener('click', () => {
-    execute();
-  });
-
-  copyScriptButton?.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(script);
-      setStatus(statusEl, 'スクリプトをコピーしました。', 'info');
-    } catch (error) {
-      setStatus(statusEl, `コピーに失敗しました: ${error.message}`, 'error');
-    }
-  });
-
-  copyOutputButton?.addEventListener('click', async () => {
-    if (!outputEl) return;
-    const text = outputEl.textContent || '';
-    if (!text || text === '(出力はありません)') {
-      setStatus(statusEl, 'コピーできる出力がありません。', 'info');
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(text);
-      setStatus(statusEl, '出力をコピーしました。', 'info');
-    } catch (error) {
-      setStatus(statusEl, `コピーに失敗しました: ${error.message}`, 'error');
-    }
-  });
-
-  dialog.addEventListener('close', () => {
-    dialog.remove();
-  });
-
-  dialog.showModal();
-  execute();
+  state.execute = execute;
+  return state.execute();
 }

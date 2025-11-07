@@ -660,6 +660,21 @@ body.theme-dark button.secondary:focus-visible {
   gap: 0.35rem;
 }
 
+.node-run {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  font-size: 1rem;
+  padding: 0.1rem 0.35rem;
+  color: var(--muted);
+  transition: color 120ms ease;
+}
+
+.node-run:hover,
+.node-run:focus-visible {
+  color: var(--accent);
+}
+
 .node-open-designer {
   border: none;
   background: transparent;
@@ -1488,119 +1503,191 @@ body.theme-dark .designer-help-section pre {
   transform: translateY(0);
 }
 
-dialog.run-dialog {
-  border: none;
-  border-radius: 16px;
-  padding: 0;
-  background: var(--context-bg);
-  color: var(--text);
-  box-shadow: var(--context-shadow);
-  width: min(640px, 92vw);
+body.has-run-console {
+  --run-console-height: 280px;
+  --run-console-offset: 0px;
+  --run-console-collapsed-height: 52px;
+  padding-bottom: var(--run-console-offset, 0px);
+  transition: padding-bottom 200ms ease;
 }
 
-dialog.run-dialog::backdrop {
-  background: rgba(15, 23, 42, 0.25);
-  backdrop-filter: blur(2px);
-}
-
-.run-dialog__form {
+.run-console {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -18px 36px rgba(15, 23, 42, 0.18);
   display: flex;
   flex-direction: column;
-  max-height: 80vh;
+  height: var(--run-console-height, 280px);
+  z-index: 40;
+  transition: height 200ms ease;
 }
 
-.run-dialog__header {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding: 1rem 1.25rem;
+.run-console.is-collapsed {
+  height: var(--run-console-collapsed-height, 52px);
+}
+
+.run-console__resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 2;
+}
+
+.run-console__header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.6rem 1rem 0.6rem 0.75rem;
   border-bottom: 1px solid var(--border);
+  background: var(--panel);
 }
 
-.run-dialog__header h2 {
-  margin: 0;
-  font-size: 1.1rem;
+.run-console__toggle {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 1.15rem;
+  padding: 0.25rem;
+  cursor: pointer;
+  transition: color 120ms ease;
 }
 
-.run-dialog__server {
+.run-console__toggle:hover,
+.run-console__toggle:focus-visible {
+  color: var(--accent);
+}
+
+.run-console__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.run-console__title {
   margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.run-console__context {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.run-console__status {
   font-size: 0.85rem;
   color: var(--muted);
-  word-break: break-all;
+  justify-self: end;
 }
 
-.run-dialog__status {
-  margin: 0;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.run-dialog__status.is-success {
+.run-console__status.is-success {
   color: #16a34a;
 }
 
-.run-dialog__status.is-error {
+.run-console__status.is-error {
   color: #dc2626;
 }
 
-.run-dialog__status.is-info {
+.run-console__status.is-info {
   color: var(--accent-dark);
 }
 
-.run-dialog__status.is-pending {
+.run-console__status.is-pending {
   color: var(--muted);
 }
 
-.run-dialog__body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem 1.25rem;
-  overflow-y: auto;
+.run-console__server {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: right;
+  word-break: break-all;
 }
 
-.run-dialog__output {
+.run-console__actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.run-console__body {
+  flex: 1;
+  background: var(--panel-subtle);
+  padding: 0.85rem 1rem 1rem;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.run-console.is-collapsed .run-console__body {
+  display: none;
+}
+
+.run-console__section {
+  background: var(--panel-strong);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.18);
+}
+
+.run-console__section h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.run-console__output {
   margin: 0;
+  min-height: 160px;
   background: #111827;
   color: #e5e7eb;
-  border-radius: 12px;
-  padding: 1rem;
-  min-height: 160px;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
   font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
   font-size: 0.9rem;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-body.theme-dark .run-dialog__output {
+body.theme-dark .run-console__output {
   background: #0f172a;
   color: #e2e8f0;
 }
 
-.run-dialog__errors {
+.run-console__errors {
   min-height: 1rem;
   color: #dc2626;
   font-size: 0.85rem;
   white-space: pre-wrap;
   word-break: break-word;
+  margin: 0;
 }
 
-.run-dialog__details {
+.run-console__details {
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--panel-subtle);
+  background: var(--panel-strong);
   overflow: hidden;
 }
 
-.run-dialog__details summary {
+.run-console__details summary {
   cursor: pointer;
   padding: 0.75rem 1rem;
   font-weight: 600;
 }
 
-.run-dialog__script {
+.run-console__script {
   width: 100%;
-  min-height: 180px;
+  min-height: 170px;
   padding: 0.75rem 1rem;
   border: none;
   border-top: 1px solid var(--border);
@@ -1611,13 +1698,23 @@ body.theme-dark .run-dialog__output {
   font-size: 0.85rem;
 }
 
-.run-dialog__actions {
-  display: flex;
-  gap: 0.5rem;
-  justify-content: flex-end;
-  padding: 0.75rem 1.25rem;
-  border-top: 1px solid var(--border);
-  flex-wrap: wrap;
+@media (max-width: 960px) {
+  .run-console__header {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    row-gap: 0.4rem;
+  }
+  .run-console__status {
+    grid-column: 2 / span 1;
+    justify-self: start;
+  }
+  .run-console__server {
+    grid-column: 2 / span 1;
+  }
+  .run-console__actions {
+    grid-column: 1 / span 2;
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 1100px) {
