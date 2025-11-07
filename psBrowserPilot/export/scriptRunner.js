@@ -45,7 +45,7 @@ function formatEndpoint(baseUrl) {
 
 const DEFAULT_PANEL_HEIGHT = 280;
 const MIN_PANEL_HEIGHT = 160;
-const COLLAPSED_HEIGHT = 52;
+const COLLAPSED_HEIGHT = 26;
 
 const panelState = {
   container: null,
@@ -55,6 +55,7 @@ const panelState = {
   currentScript: '',
   currentEndpoint: '',
   execute: null,
+  renderOutput: null,
 };
 
 const updateBodyOffset = (height, collapsed) => {
@@ -110,6 +111,7 @@ const ensureConsole = () => {
     <header class="run-console__header">
       <button type="button" class="run-console__toggle" data-role="toggle" aria-expanded="false" aria-controls="run-console-body">▴</button>
       <div class="run-console__titles">
+        <span class="run-console__title">PowerShell Debug Console</span>
         <span class="run-console__context" data-role="context">全ノードを実行</span>
       </div>
       <span class="run-console__status" data-role="status">待機中</span>
@@ -123,11 +125,7 @@ const ensureConsole = () => {
     <div class="run-console__body" id="run-console-body">
       <div class="run-console__section">
         <h3>出力</h3>
-        <pre class="run-console__output" data-role="output">(出力はありません)</pre>
-      </div>
-      <div class="run-console__section">
-        <h3>エラー</h3>
-        <pre class="run-console__errors" data-role="errors"></pre>
+        <pre class="run-console__output" data-role="output"><span class="run-console__output-text is-empty">(出力はありません)</span></pre>
       </div>
       <details class="run-console__details" open>
         <summary>生成されたスクリプトを表示</summary>
@@ -146,7 +144,6 @@ const ensureConsole = () => {
     server: container.querySelector('[data-role="server"]'),
     context: container.querySelector('[data-role="context"]'),
     output: container.querySelector('[data-role="output"]'),
-    errors: container.querySelector('[data-role="errors"]'),
     script: container.querySelector('[data-role="script"]'),
     rerun: container.querySelector('[data-action="rerun"]'),
     copyOutput: container.querySelector('[data-action="copy-output"]'),
@@ -209,6 +206,43 @@ const ensureConsole = () => {
   panelState.container = container;
   panelState.elements = elements;
   panelState.height = DEFAULT_PANEL_HEIGHT;
+  panelState.renderOutput = (outputText, errors = []) => {
+    const outputEl = panelState.elements.output;
+    if (!outputEl) {
+      return;
+    }
+    outputEl.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    const textValue =
+      outputText === null || outputText === undefined ? '' : String(outputText);
+    const hasOutput = textValue.trim().length > 0;
+    if (hasOutput) {
+      const span = document.createElement('span');
+      span.className = 'run-console__output-text';
+      span.textContent = textValue;
+      fragment.appendChild(span);
+    }
+    const normalizedErrors = Array.isArray(errors)
+      ? errors.map((line) => String(line || '').trim()).filter(Boolean)
+      : [];
+    if (normalizedErrors.length) {
+      const span = document.createElement('span');
+      span.className = 'run-console__output-error';
+      span.textContent = normalizedErrors.join('\n');
+      fragment.appendChild(span);
+      outputEl.classList.add('has-error');
+    } else {
+      outputEl.classList.remove('has-error');
+    }
+    if (!fragment.childNodes.length) {
+      const span = document.createElement('span');
+      span.className = 'run-console__output-text is-empty';
+      span.textContent = '(出力はありません)';
+      fragment.appendChild(span);
+    }
+    outputEl.appendChild(fragment);
+  };
+  panelState.renderOutput('', []);
   setCollapsed(true);
   updateBodyOffset(panelState.height, true);
 
@@ -238,23 +272,16 @@ export function runScriptWithDialog(
     const label = contextLabel || targetNodeId || '';
     elements.context.textContent = label ? `ノード: ${label}` : '全ノードを実行';
   }
-  if (elements.output) {
-    elements.output.textContent = '(出力はありません)';
-  }
-  if (elements.errors) {
-    elements.errors.textContent = '';
-  }
+  state.renderOutput?.('', []);
+
+  setCollapsed(false);
+  applyHeight(state.height);
 
   setCollapsed(false);
   applyHeight(state.height);
 
   const execute = async () => {
-    if (elements.output) {
-      elements.output.textContent = '(出力はありません)';
-    }
-    if (elements.errors) {
-      elements.errors.textContent = '';
-    }
+    state.renderOutput?.('', []);
     if (elements.rerun) {
       elements.rerun.disabled = true;
     }
@@ -280,17 +307,9 @@ export function runScriptWithDialog(
       }
 
       const hasErrors = json?.ok === false || (Array.isArray(json?.errors) && json.errors.length);
-      if (elements.output) {
-        const text = json?.output;
-        elements.output.textContent = text && String(text).trim() ? String(text) : '(出力はありません)';
-      }
-      if (elements.errors) {
-        if (Array.isArray(json?.errors) && json.errors.length) {
-          elements.errors.textContent = json.errors.join('\n');
-        } else {
-          elements.errors.textContent = '';
-        }
-      }
+      const outputText = json?.output && String(json.output).trim() ? String(json.output) : '';
+      const errorLines = Array.isArray(json?.errors) ? json.errors : [];
+      state.renderOutput?.(outputText, errorLines);
 
       if (hasErrors) {
         setStatus(elements.status, 'PowerShell がエラーを返しました。', 'error');
@@ -298,9 +317,7 @@ export function runScriptWithDialog(
         setStatus(elements.status, 'PowerShell での実行が完了しました。', 'success');
       }
     } catch (error) {
-      if (elements.errors) {
-        elements.errors.textContent = error.message;
-      }
+      state.renderOutput?.('', [error.message]);
       setStatus(elements.status, 'サーバーへの接続に失敗しました。', 'error');
     } finally {
       if (elements.rerun) {
