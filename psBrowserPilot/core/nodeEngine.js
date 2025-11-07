@@ -465,6 +465,13 @@ export class NodeEditor {
         ...(def.initialConfig && typeof def.initialConfig === 'object' ? def.initialConfig : {}),
         ...Object.fromEntries((def.controls || []).map((control) => [control.key, control.default ?? ''])),
       };
+      const preservedKeys = new Set(
+        Array.isArray(def.preserveConfigKeys)
+          ? def.preserveConfigKeys
+              .map((key) => (typeof key === 'string' ? key.trim() : ''))
+              .filter(Boolean)
+          : []
+      );
       node.config = {
         ...defaults,
         ...node.config,
@@ -475,6 +482,9 @@ export class NodeEditor {
         }
         const controlHasKey = (def.controls || []).some((control) => control.key === key);
         if (controlHasKey) {
+          return;
+        }
+        if (preservedKeys.has(key)) {
           return;
         }
         delete node.config[key];

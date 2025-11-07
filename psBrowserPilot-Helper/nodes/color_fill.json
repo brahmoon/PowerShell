@@ -9,6 +9,9 @@
     "Range"
   ],
   "outputs": [],
+  "preserveConfigKeys": [
+    "colorPalette"
+  ],
   "constants": [
     {
       "key": "note",
