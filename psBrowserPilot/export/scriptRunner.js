@@ -51,14 +51,11 @@ const panelState = {
   container: null,
   elements: {},
   height: DEFAULT_PANEL_HEIGHT,
-  lastHeight: DEFAULT_PANEL_HEIGHT,
   isCollapsed: true,
-  isFullscreen: false,
   currentScript: '',
   currentEndpoint: '',
   execute: null,
   renderOutput: null,
-  resizeHandler: null,
 };
 
 const updateBodyOffset = (height, collapsed) => {
@@ -73,58 +70,12 @@ const updateBodyOffset = (height, collapsed) => {
 };
 
 const applyHeight = (height) => {
-  const limit = panelState.isFullscreen ? window.innerHeight - 24 : window.innerHeight - 120;
-  const maxHeight = Math.max(MIN_PANEL_HEIGHT, Math.min(height, limit));
+  const maxHeight = Math.max(MIN_PANEL_HEIGHT, Math.min(height, window.innerHeight - 120));
   panelState.height = maxHeight;
-  if (!panelState.isFullscreen) {
-    panelState.lastHeight = maxHeight;
-  }
   if (panelState.container && !panelState.isCollapsed) {
     panelState.container.style.height = `${maxHeight}px`;
     updateBodyOffset(maxHeight, false);
   }
-};
-
-const updateCollapseButton = () => {
-  const button = panelState.elements.collapse;
-  if (!button) {
-    return;
-  }
-  if (panelState.isCollapsed) {
-    button.textContent = '⛶';
-    button.setAttribute('aria-label', 'デバッグコンソールを全画面表示');
-  } else {
-    button.textContent = '✕';
-    button.setAttribute('aria-label', 'デバッグコンソールを最小化');
-  }
-};
-
-const setFullscreen = (fullscreen) => {
-  panelState.isFullscreen = fullscreen;
-  const { container } = panelState;
-  if (!container) {
-    updateCollapseButton();
-    return;
-  }
-  const previousHeight = panelState.height;
-  container.classList.toggle('is-fullscreen', fullscreen);
-  if (fullscreen) {
-    if (!panelState.isCollapsed) {
-      panelState.lastHeight =
-        previousHeight || panelState.lastHeight || DEFAULT_PANEL_HEIGHT;
-    }
-    const height = Math.max(MIN_PANEL_HEIGHT, window.innerHeight - 24);
-    panelState.height = height;
-    container.style.height = `${height}px`;
-    updateBodyOffset(height, false);
-  } else {
-    panelState.height = panelState.lastHeight || DEFAULT_PANEL_HEIGHT;
-    if (!panelState.isCollapsed) {
-      container.style.height = `${panelState.height}px`;
-      updateBodyOffset(panelState.height, false);
-    }
-  }
-  updateCollapseButton();
 };
 
 const setCollapsed = (collapsed) => {
@@ -135,7 +86,6 @@ const setCollapsed = (collapsed) => {
   }
   container.classList.toggle('is-collapsed', collapsed);
   if (collapsed) {
-    setFullscreen(false);
     container.style.height = '';
   } else {
     container.style.height = `${panelState.height}px`;
@@ -144,11 +94,7 @@ const setCollapsed = (collapsed) => {
     elements.toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     elements.toggle.textContent = collapsed ? '▴' : '▾';
   }
-  if (elements.collapse) {
-    elements.collapse.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-  }
   updateBodyOffset(panelState.height, collapsed);
-  updateCollapseButton();
 };
 
 const ensureConsole = () => {
@@ -174,7 +120,6 @@ const ensureConsole = () => {
         <button type="button" class="secondary" data-action="copy-script">スクリプトをコピー</button>
         <button type="button" class="primary" data-action="rerun">再実行</button>
       </div>
-      <button type="button" class="run-console__collapse" data-role="collapse" aria-label="デバッグコンソールを最小化">✕</button>
     </header>
     <div class="run-console__body" id="run-console-body">
       <div class="run-console__section">
@@ -202,7 +147,6 @@ const ensureConsole = () => {
     rerun: container.querySelector('[data-action="rerun"]'),
     copyOutput: container.querySelector('[data-action="copy-output"]'),
     copyScript: container.querySelector('[data-action="copy-script"]'),
-    collapse: container.querySelector('[data-role="collapse"]'),
   };
 
   elements.toggle?.addEventListener('click', () => {
@@ -217,38 +161,18 @@ const ensureConsole = () => {
     if (panelState.isCollapsed) {
       setCollapsed(false);
     }
-    if (panelState.isFullscreen) {
-      setFullscreen(false);
-    }
     const startHeight = panelState.height;
     const startY = event.clientY;
-    const pointerId = event.pointerId;
-    const handleEl = event.currentTarget || event.target;
-    try {
-      handleEl?.setPointerCapture(pointerId);
-    } catch (error) {
-      // Ignore if pointer capture isn't supported.
-    }
     const handleMove = (moveEvent) => {
       const delta = moveEvent.clientY - startY;
       applyHeight(startHeight - delta);
     };
-    const handleUp = (upEvent) => {
-      if (upEvent.pointerId !== pointerId) {
-        return;
-      }
+    const handleUp = () => {
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
-      window.removeEventListener('pointercancel', handleUp);
-      try {
-        handleEl?.releasePointerCapture(pointerId);
-      } catch (error) {
-        // Ignore release errors.
-      }
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
-    window.addEventListener('pointercancel', handleUp);
   });
 
   elements.rerun?.addEventListener('click', () => {
@@ -278,22 +202,9 @@ const ensureConsole = () => {
     }
   });
 
-  elements.collapse?.addEventListener('click', () => {
-    if (panelState.isCollapsed) {
-      const previousHeight =
-        panelState.lastHeight || panelState.height || DEFAULT_PANEL_HEIGHT;
-      panelState.height = previousHeight;
-      setCollapsed(false);
-      setFullscreen(true);
-    } else {
-      setCollapsed(true);
-    }
-  });
-
   panelState.container = container;
   panelState.elements = elements;
   panelState.height = DEFAULT_PANEL_HEIGHT;
-  updateCollapseButton();
   panelState.renderOutput = (outputText, errors = []) => {
     const outputEl = panelState.elements.output;
     if (!outputEl) {
@@ -334,23 +245,6 @@ const ensureConsole = () => {
   setCollapsed(true);
   updateBodyOffset(panelState.height, true);
 
-  if (!panelState.resizeHandler) {
-    panelState.resizeHandler = () => {
-      if (!panelState.container) {
-        return;
-      }
-      if (panelState.isCollapsed) {
-        updateBodyOffset(panelState.height, true);
-        return;
-      }
-      applyHeight(panelState.height);
-      if (panelState.container && !panelState.isCollapsed) {
-        panelState.container.style.height = `${panelState.height}px`;
-      }
-    };
-    window.addEventListener('resize', panelState.resizeHandler);
-  }
-
   return panelState;
 };
 
@@ -378,6 +272,9 @@ export function runScriptWithDialog(
     elements.context.textContent = label ? `ノード: ${label}` : '全ノードを実行';
   }
   state.renderOutput?.('', []);
+
+  setCollapsed(false);
+  applyHeight(state.height);
 
   setCollapsed(false);
   applyHeight(state.height);

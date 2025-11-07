@@ -13,10 +13,9 @@ const DEFAULT_UI_MARKUP = [
   '</div>',
 ].join('\n');
 const DEFAULT_UI_SCRIPT = [
-  "// The context argument provides helpers like updateConfig, resolveInput, getPortState, and toPowerShellLiteral.",
+  "// The context argument provides helpers like updateConfig, resolveInput, and toPowerShellLiteral.",
   "// Update outputs by calling updateConfig('Result', toPowerShellLiteral('value')).",
-  'const { controls, updateConfig, toPowerShellLiteral, getPortState } = context;',
-  "const isSourceConnected = getPortState?.('input', 'Source')?.isConnected;",
+  'const { controls, updateConfig, toPowerShellLiteral } = context;',
   'if (controls) {',
   "  const button = controls.querySelector('button');",
   '  const status = controls.querySelector("[data-status]");',
@@ -106,7 +105,7 @@ const normalizeChainExecution = (value) => {
   return Boolean(value);
 };
 
-const PLACEHOLDER_PATTERN = /\{\{\s*(input|output|config)\.([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)\s*\}\}/g;
+const PLACEHOLDER_PATTERN = /\{\{\s*(input|output|config)\.([A-Za-z0-9_]+)\s*\}\}/g;
 const CONFIG_INPUT_ASSIGN_PATTERN =
   /\{\{\s*config\.([A-Za-z0-9_]+)\s*\}\}\s*=\s*\{\{\s*input\.([A-Za-z0-9_]+)\s*\}\}/g;
 
@@ -329,44 +328,9 @@ const createScriptFunction = (template) => {
     return () => '';
   }
   return ({ inputs = {}, outputs = {}, config = {} }) =>
-    normalized.replace(PLACEHOLDER_PATTERN, (match, scope, path) => {
+    normalized.replace(PLACEHOLDER_PATTERN, (match, scope, key) => {
       const source = scope === 'input' ? inputs : scope === 'output' ? outputs : config;
-      const segments = String(path || '')
-        .split('.')
-        .map((segment) => segment.trim())
-        .filter(Boolean);
-      if (!segments.length) {
-        return match;
-      }
-      let current = source;
-      for (let index = 0; index < segments.length; index += 1) {
-        const segment = segments[index];
-        if (current && typeof current === 'object' && segment in current) {
-          current = current[segment];
-        } else {
-          current = undefined;
-          break;
-        }
-      }
-      if (current === undefined) {
-        return match;
-      }
-      if (current !== null && typeof current === 'object') {
-        if (Object.prototype.hasOwnProperty.call(current, 'value')) {
-          current = current.value;
-        } else if (Object.prototype.hasOwnProperty.call(current, 'rawValue')) {
-          current = current.rawValue;
-        } else {
-          return match;
-        }
-      }
-      if (typeof current === 'boolean') {
-        return current ? '$true' : '$false';
-      }
-      if (current === null) {
-        return '$null';
-      }
-      return String(current);
+      return Object.prototype.hasOwnProperty.call(source, key) ? source[key] : match;
     });
 };
 
@@ -1553,7 +1517,7 @@ export const createEmptySpec = (execution = 'powershell') => ({
     { type: 'TextBox', key: 'note', value: '# TODO: describe behavior' },
   ],
   script: [
-    '# Use {{input.Name}} to reference incoming values (and {{input.Name.isConnected}} to check connections),',
+    '# Use {{input.Name}} to reference incoming values,',
     '# {{config.key}} for constant fields, and {{output.Result}} for outputs.',
     '# Remove these lines and write your PowerShell snippet here.',
   ].join('\n'),
