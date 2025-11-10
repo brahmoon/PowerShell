@@ -300,7 +300,6 @@ public class AnimatedDockableForm : Form
     private bool _isLocationAnimating = false;
     private bool _autoShowSuppressed = false;
     private bool _isFullScreenDragRestoreInProgress = false;
-    private Point _latestFullScreenRestoreCursor;
     private const int DockDetachThreshold = 30;
 
     
@@ -1072,7 +1071,7 @@ public class AnimatedDockableForm : Form
         if (_isFullScreen)
             return;
 
-        if (!_allowTopResize)
+        if (!_isManuallyUndocked)
             return;
 
         _currentResizeDirection = direction;
@@ -1098,7 +1097,7 @@ public class AnimatedDockableForm : Form
         if (_topResizeHandle == null || _topLeftResizeHandle == null || _topRightResizeHandle == null)
             return;
 
-        bool showHandles = !_isFullScreen && _allowTopResize;
+        bool showHandles = _isManuallyUndocked && !_isFullScreen && _allowTopResize;
 
         int handleHeight = RESIZE_BORDER_SIZE;
         int cornerWidth = RESIZE_BORDER_SIZE * 2;
@@ -1361,9 +1360,9 @@ public class AnimatedDockableForm : Form
         bool onRightEdge = mousePosition.X >= clientWidth - RESIZE_BORDER_SIZE;
         bool onBottomEdge = mousePosition.Y >= clientHeight - RESIZE_BORDER_SIZE;
         bool onTopEdge = mousePosition.Y <= RESIZE_BORDER_SIZE && _allowTopResize;
-        bool withinHeader = _headerPanel != null && mousePosition.Y <= _headerPanel.Height;
-
-        if (withinHeader && !onTopEdge)
+        
+        // ヘッダーパネル内の場合はリサイズ無効（ドラッグ移動用）
+        if (mousePosition.Y <= _headerPanel.Height)
             return ResizeDirection.None;
         
         if (onTopEdge && onLeftEdge)
@@ -2092,12 +2091,6 @@ public class AnimatedDockableForm : Form
                 return;
             }
 
-            if (_isFullScreenDragRestoreInProgress)
-            {
-                _latestFullScreenRestoreCursor = Cursor.Position;
-                return;
-            }
-
             if (_isFullScreenDragRestoreInProgress || _isLocationAnimating)
                 return;
 
@@ -2205,48 +2198,39 @@ public class AnimatedDockableForm : Form
         _shouldHideWhenAnimationComplete = false;
 
         Rectangle startBounds = this.Bounds;
-        Size restoreSize = _dockSize.Width > 0 && _dockSize.Height > 0
+        Size targetSize = _dockSize.Width > 0 && _dockSize.Height > 0
             ? _dockSize
             : new Size(Math.Max(this.MinimumSize.Width, _originalWidth), Math.Max(this.MinimumSize.Height, _originalHeight));
 
-        if (restoreSize.Width <= 0 || restoreSize.Height <= 0)
+        if (targetSize.Width <= 0 || targetSize.Height <= 0)
         {
-            restoreSize = new Size(Math.Max(this.MinimumSize.Width, 900), Math.Max(this.MinimumSize.Height, 620));
+            targetSize = new Size(Math.Max(this.MinimumSize.Width, 900), Math.Max(this.MinimumSize.Height, 620));
         }
 
         Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
         Point cursorScreen = Cursor.Position;
-        _latestFullScreenRestoreCursor = cursorScreen;
 
         float xRatio = startBounds.Width > 0 ? (float)_dragStartFormPoint.X / startBounds.Width : 0.5f;
         float yRatio = startBounds.Height > 0 ? (float)_dragStartFormPoint.Y / startBounds.Height : 0.0f;
 
-        Func<Point, Size, Rectangle> computeBoundsForCursor = (anchorCursor, size) =>
+        int targetX = cursorScreen.X - (int)Math.Round(targetSize.Width * xRatio);
+        int targetY = cursorScreen.Y - (int)Math.Round(targetSize.Height * yRatio);
+
+        targetX = Math.Max(workingArea.Left, Math.Min(targetX, workingArea.Right - targetSize.Width));
+        targetY = Math.Max(workingArea.Top, Math.Min(targetY, workingArea.Bottom - targetSize.Height));
+
+        Rectangle targetBounds = new Rectangle(targetX, targetY, targetSize.Width, targetSize.Height);
+
+        Action completeRestore = () =>
         {
-            int width = Math.Max(1, size.Width);
-            int height = Math.Max(1, size.Height);
-
-            int x = anchorCursor.X - (int)Math.Round(width * xRatio);
-            int y = anchorCursor.Y - (int)Math.Round(height * yRatio);
-
-            x = Math.Max(workingArea.Left, Math.Min(x, workingArea.Right - width));
-            y = Math.Max(workingArea.Top, Math.Min(y, workingArea.Bottom - height));
-
-            return new Rectangle(x, y, width, height);
-        };
-
-        Rectangle desiredBounds = computeBoundsForCursor(cursorScreen, restoreSize);
-
-        Action<Rectangle> completeRestore = finalBounds =>
-        {
-            this.Bounds = finalBounds;
-            _originalWidth = finalBounds.Width;
-            _originalHeight = finalBounds.Height;
-            _dockSize = finalBounds.Size;
-            _dockLocation = finalBounds.Location;
-            _formLeftPosition = finalBounds.X;
-            _triggerX = finalBounds.X;
-            _triggerY = finalBounds.Y;
+            this.Bounds = targetBounds;
+            _originalWidth = targetBounds.Width;
+            _originalHeight = targetBounds.Height;
+            _dockSize = targetBounds.Size;
+            _dockLocation = targetBounds.Location;
+            _formLeftPosition = targetBounds.X;
+            _triggerX = targetBounds.X;
+            _triggerY = targetBounds.Y;
             UpdateTriggerArea();
 
             _statusLabel.Text = "フルスクリーンドラッグを解除しました";
@@ -2269,35 +2253,32 @@ public class AnimatedDockableForm : Form
 
         _isFullScreenDragRestoreInProgress = true;
 
-        if (startBounds == desiredBounds)
+        if (startBounds == targetBounds)
         {
-            Rectangle finalBounds = computeBoundsForCursor(_latestFullScreenRestoreCursor, restoreSize);
-            completeRestore(finalBounds);
+            completeRestore();
             return;
         }
 
         _animationEngine.Start(
             progress =>
             {
-                int width = startBounds.Width + (int)((restoreSize.Width - startBounds.Width) * progress);
-                int height = startBounds.Height + (int)((restoreSize.Height - startBounds.Height) * progress);
-
-                Size animatedSize = new Size(width, height);
-                Rectangle nextBounds = computeBoundsForCursor(_latestFullScreenRestoreCursor, animatedSize);
-                this.Bounds = nextBounds;
+                int width = startBounds.Width + (int)((targetBounds.Width - startBounds.Width) * progress);
+                int height = startBounds.Height + (int)((targetBounds.Height - startBounds.Height) * progress);
+                int x = startBounds.X + (int)((targetBounds.X - startBounds.X) * progress);
+                int y = startBounds.Y + (int)((targetBounds.Y - startBounds.Y) * progress);
+                this.Bounds = new Rectangle(x, y, width, height);
             },
             () =>
             {
-                Rectangle finalBounds = computeBoundsForCursor(_latestFullScreenRestoreCursor, restoreSize);
-                completeRestore(finalBounds);
+                completeRestore();
             });
     }
 
     private void SetManualUndockState(bool isUndocked)
     {
         _isManuallyUndocked = isUndocked;
-        bool shouldAllowTopResize = isUndocked || _dockPosition == DockPosition.Top;
-        AllowTopResize = shouldAllowTopResize;
+        AllowTopResize = isUndocked;
+        UpdateTopResizeHandles();
     }
 
     private void DetachFromTopDock(Point currentScreenPoint, int verticalDelta)
@@ -2345,7 +2326,6 @@ public class AnimatedDockableForm : Form
         _dockPosition = DockPosition.Top;
         SetManualUndockState(false);
         _triggerX = clampedX;
-        _triggerY = 0;
         _formLeftPosition = clampedX;
         UpdateTriggerArea();
         _dockLocation = this.Location;
