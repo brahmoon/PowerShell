@@ -273,8 +273,6 @@ public class AnimatedDockableForm : Form
     private int _showDelayMilliseconds = 1000; // 1秒の遅延
     private NotifyIcon _notifyIcon = new NotifyIcon();
     private Point _dragStartPoint;
-    private Point _dragStartScreenPoint;
-    private Point _dragStartFormPoint;
     private bool _isDragging = false;
     private DockPosition _dockPosition = DockPosition.Top;
     private Rectangle _triggerArea;
@@ -289,15 +287,11 @@ public class AnimatedDockableForm : Form
     private bool _isClosingAnimation = false;
     private bool _shouldHideWhenAnimationComplete = false;
     private AnimationEngine _animationEngine;
-    private AnimationEngine _locationAnimationEngine;
     private Size _dockSize;
     private Size _fullScreenSize;
     private Point _dockLocation;
     private bool _suspendLayout = false;
     private bool _isResizing = false;
-    private bool _isManuallyUndocked = false;
-    private bool _isLocationAnimating = false;
-    private const int DockDetachThreshold = 10;
 
     
     // リサイズ方向の列挙型
@@ -547,13 +541,7 @@ public class AnimatedDockableForm : Form
     {
         // タイマーを停止
         _hideDelayTimer.Stop();
-
-        if (_isManuallyUndocked)
-        {
-            _mouseLeavePending = false;
-            return;
-        }
-
+        
         // 遅延後もまだマウスがフォーム外にあるか確認
         if (_mouseLeavePending && !IsMouseInForm() && this.Visible && !_animationEngine.IsRunning)
         {
@@ -585,12 +573,6 @@ public class AnimatedDockableForm : Form
         if (!_showDelayPending)
             return;
 
-        if (_isManuallyUndocked)
-        {
-            _showDelayPending = false;
-            return;
-        }
-
         _showDelayPending = false;
 
         if (_pinMode != PinMode.None || _isFullScreen)
@@ -614,8 +596,6 @@ public class AnimatedDockableForm : Form
         {
             _animationEngine.Stop();
         }
-
-        StopLocationAnimation();
 
         if (_suspendLayout)
         {
@@ -690,54 +670,6 @@ public class AnimatedDockableForm : Form
                 {
                     ResumeLayout(true);
                     _suspendLayout = false;
-                }
-            }
-        );
-    }
-
-    private void StopLocationAnimation()
-    {
-        if (_locationAnimationEngine != null && _locationAnimationEngine.IsRunning)
-        {
-            _locationAnimationEngine.Stop();
-        }
-        _locationAnimationEngine = null;
-        _isLocationAnimating = false;
-    }
-
-    private void StartLocationAnimation(Point targetLocation, Action completedAction)
-    {
-        StopLocationAnimation();
-
-        Point startLocation = this.Location;
-
-        if (startLocation == targetLocation)
-        {
-            _isLocationAnimating = false;
-            if (completedAction != null)
-            {
-                completedAction();
-            }
-            return;
-        }
-
-        _isLocationAnimating = true;
-        _locationAnimationEngine = new AnimationEngine(_animationDuration, 30, EasingFunctions.EasingType.EaseOutCubic);
-
-        _locationAnimationEngine.Start(
-            delegate(float progress)
-            {
-                int newX = startLocation.X + (int)((targetLocation.X - startLocation.X) * progress);
-                int newY = startLocation.Y + (int)((targetLocation.Y - startLocation.Y) * progress);
-                this.Location = new Point(newX, newY);
-            },
-            delegate
-            {
-                this.Location = targetLocation;
-                _isLocationAnimating = false;
-                if (completedAction != null)
-                {
-                    completedAction();
                 }
             }
         );
@@ -888,53 +820,17 @@ public class AnimatedDockableForm : Form
         closeButton.FlatStyle = FlatStyle.Flat;
         closeButton.FlatAppearance.BorderSize = 0;
         closeButton.Text = "✕";
-        closeButton.Click += (s, e) => {
+        closeButton.Click += (s, e) => { 
             if (_isClosingAnimation || _isFullScreen)
             {
                 // フルスクリーンモードまたはアニメーション実行中は即時非表示
                 this.Hide();
-                return;
-            }
-
-            Action initiateClose = delegate()
-            {
-                if (_hideDelayTimer.Enabled)
-                {
-                    _hideDelayTimer.Stop();
-                }
-                _mouseLeavePending = false;
-
-                if (_showDelayTimer.Enabled)
-                {
-                    _showDelayTimer.Stop();
-                }
-                _showDelayPending = false;
-
-                _shouldHideWhenAnimationComplete = true;
-                StartHeightAnimation(false, this.Height);
-            };
-
-            if (_isManuallyUndocked || this.Top != 0 || _dockPosition != DockPosition.Top)
-            {
-                _isManuallyUndocked = false;
-                _dockPosition = DockPosition.Top;
-
-                Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
-                int clampedX = Math.Max(workingArea.Left, Math.Min(this.Location.X, workingArea.Right - this.Width));
-                Point targetLocation = new Point(clampedX, 0);
-                StartLocationAnimation(targetLocation, delegate()
-                {
-                    this.Location = new Point(clampedX, 0);
-                    _triggerX = clampedX;
-                    _formLeftPosition = clampedX;
-                    UpdateTriggerArea();
-                    _dockLocation = this.Location;
-                    initiateClose();
-                });
             }
             else
             {
-                initiateClose();
+                // アニメーションで徐々に閉じる
+                _shouldHideWhenAnimationComplete = true;
+                StartHeightAnimation(false, this.Height);
             }
         };
         closeButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -1466,23 +1362,6 @@ public class AnimatedDockableForm : Form
         if (_isResizing)
             return;
 
-        if (_isManuallyUndocked)
-        {
-            if (_hideDelayTimer.Enabled)
-            {
-                _hideDelayTimer.Stop();
-            }
-            _mouseLeavePending = false;
-
-            if (_showDelayTimer.Enabled)
-            {
-                _showDelayTimer.Stop();
-            }
-            _showDelayPending = false;
-
-            return;
-        }
-
         bool isAnimating = _animationEngine.IsRunning;
 
         // 開くアニメーション中は処理をスキップし、閉じるアニメーション中は再フォーカス検知のため継続
@@ -1686,8 +1565,6 @@ public class AnimatedDockableForm : Form
                 // リサイズ領域外ならドラッグ移動開始
                 _isDragging = true;
                 _dragStartPoint = new Point(e.X, e.Y);
-                _dragStartScreenPoint = Cursor.Position;
-                _dragStartFormPoint = clientPoint;
             }
         }
     }
@@ -1705,26 +1582,14 @@ public class AnimatedDockableForm : Form
             // フルスクリーンモード時はドラッグ無効
             if (_isFullScreen)
                 return;
-
-            if (_isLocationAnimating)
-                return;
-
+                
             Point newLocation = this.Location;
-
-            if (_dockPosition == DockPosition.Top && !_isManuallyUndocked)
+            
+            if (_dockPosition == DockPosition.Top)
             {
-                Point currentScreenPoint = Cursor.Position;
-                int verticalDelta = currentScreenPoint.Y - _dragStartScreenPoint.Y;
-
-                if (verticalDelta > DockDetachThreshold)
-                {
-                    DetachFromTopDock(currentScreenPoint);
-                    return;
-                }
-
                 // When docked to top, only allow horizontal movement
                 newLocation.X = this.Location.X + (e.X - _dragStartPoint.X);
-
+                
                 // Keep within screen bounds
                 if (newLocation.X < 0)
                     newLocation.X = 0;
@@ -1732,7 +1597,7 @@ public class AnimatedDockableForm : Form
                     newLocation.X = Screen.PrimaryScreen.WorkingArea.Width - this.Width;
                 
                 this.Location = newLocation;
-
+                
                 // Update trigger area position
                 _formLeftPosition = newLocation.X;
                 _triggerX = newLocation.X;
@@ -1761,19 +1626,13 @@ public class AnimatedDockableForm : Form
                 newLocation.X = this.Location.X + (e.X - _dragStartPoint.X);
                 newLocation.Y = this.Location.Y + (e.Y - _dragStartPoint.Y);
                 this.Location = newLocation;
-
-                if (_isManuallyUndocked && newLocation.Y <= 0)
-                {
-                    RedockToTop(sender, e);
-                    return;
-                }
             }
-
+            
             // 現在の位置をドック位置として保存
             _dockLocation = this.Location;
         }
     }
-
+    
     // Form_MouseUp イベントハンドラ（ドラッグとリサイズの両方に対応）
     private void Form_MouseUp(object sender, MouseEventArgs e)
     {
@@ -1801,57 +1660,6 @@ public class AnimatedDockableForm : Form
         }
         
         _isDragging = false;
-    }
-
-    private void DetachFromTopDock(Point currentScreenPoint)
-    {
-        StopAnimationAndResumeLayoutIfNeeded();
-        _isClosingAnimation = false;
-        _shouldHideWhenAnimationComplete = false;
-
-        _dockPosition = DockPosition.None;
-        _isManuallyUndocked = true;
-
-        if (_hideDelayTimer.Enabled)
-        {
-            _hideDelayTimer.Stop();
-        }
-        _mouseLeavePending = false;
-
-        if (_showDelayTimer.Enabled)
-        {
-            _showDelayTimer.Stop();
-        }
-        _showDelayPending = false;
-
-        Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
-        int targetX = currentScreenPoint.X - _dragStartFormPoint.X;
-        int targetY = currentScreenPoint.Y - _dragStartFormPoint.Y;
-
-        targetX = Math.Max(workingArea.Left, Math.Min(targetX, workingArea.Right - this.Width));
-        targetY = Math.Max(workingArea.Top, Math.Min(targetY, workingArea.Bottom - this.Height));
-
-        StartLocationAnimation(new Point(targetX, targetY), delegate { });
-    }
-
-    private void RedockToTop(object sender, MouseEventArgs e)
-    {
-        Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
-        int clampedX = Math.Max(workingArea.Left, Math.Min(this.Location.X, workingArea.Right - this.Width));
-        this.Location = new Point(clampedX, 0);
-
-        _dockPosition = DockPosition.Top;
-        _isManuallyUndocked = false;
-        _triggerX = clampedX;
-        _formLeftPosition = clampedX;
-        UpdateTriggerArea();
-        _dockLocation = this.Location;
-
-        Point cursorScreen = Cursor.Position;
-        _dragStartScreenPoint = cursorScreen;
-        _dragStartFormPoint = this.PointToClient(cursorScreen);
-
-        _dragStartPoint = e.Location;
     }
     
     // ディスポーズ処理のオーバーライド
