@@ -19,6 +19,7 @@ using System.Linq;
 using System.Threading;
 using System.IO;
 using System.Web.Script.Serialization;
+using MetroUI;
 
 #region DockableForm Classes
 // イージング関数を提供するクラス
@@ -273,6 +274,8 @@ public class AnimatedDockableForm : Form
     private int _showDelayMilliseconds = 1000; // 1秒の遅延
     private NotifyIcon _notifyIcon = new NotifyIcon();
     private Point _dragStartPoint;
+    private Point _dragStartScreenPoint;
+    private Point _dragStartFormPoint;
     private bool _isDragging = false;
     private DockPosition _dockPosition = DockPosition.Top;
     private Rectangle _triggerArea;
@@ -287,11 +290,16 @@ public class AnimatedDockableForm : Form
     private bool _isClosingAnimation = false;
     private bool _shouldHideWhenAnimationComplete = false;
     private AnimationEngine _animationEngine;
+    private AnimationEngine _locationAnimationEngine;
     private Size _dockSize;
     private Size _fullScreenSize;
     private Point _dockLocation;
     private bool _suspendLayout = false;
     private bool _isResizing = false;
+    private bool _isManuallyUndocked = false;
+    private bool _isLocationAnimating = false;
+    private bool _autoShowSuppressed = false;
+    private const int DockDetachThreshold = 30;
 
     
     // リサイズ方向の列挙型
@@ -327,8 +335,13 @@ public class AnimatedDockableForm : Form
     }
 
     // UI Controls
+    private Button _settingsButton;
     private Button _pinButton;
     private Button _fullscreenButton;
+    private Panel _buttonPanel;
+    private Panel _topResizeHandle;
+    private Panel _topLeftResizeHandle;
+    private Panel _topRightResizeHandle;
     private DoubleBufferedPanel _contentPanel;
     private Label _statusLabel;
     private Panel _headerPanel;
@@ -406,7 +419,11 @@ public class AnimatedDockableForm : Form
     public bool AllowTopResize
     {
         get { return _allowTopResize; }
-        set { _allowTopResize = value; }
+        set
+        {
+            _allowTopResize = value;
+            UpdateTopResizeHandles();
+        }
     }
 
     // アニメーション時間の短縮プロパティ（ms）
@@ -541,7 +558,13 @@ public class AnimatedDockableForm : Form
     {
         // タイマーを停止
         _hideDelayTimer.Stop();
-        
+
+        if (_isManuallyUndocked)
+        {
+            _mouseLeavePending = false;
+            return;
+        }
+
         // 遅延後もまだマウスがフォーム外にあるか確認
         if (_mouseLeavePending && !IsMouseInForm() && this.Visible && !_animationEngine.IsRunning)
         {
@@ -573,6 +596,12 @@ public class AnimatedDockableForm : Form
         if (!_showDelayPending)
             return;
 
+        if (_isManuallyUndocked)
+        {
+            _showDelayPending = false;
+            return;
+        }
+
         _showDelayPending = false;
 
         if (_pinMode != PinMode.None || _isFullScreen)
@@ -596,6 +625,8 @@ public class AnimatedDockableForm : Form
         {
             _animationEngine.Stop();
         }
+
+        StopLocationAnimation();
 
         if (_suspendLayout)
         {
@@ -625,6 +656,11 @@ public class AnimatedDockableForm : Form
             {
                 this.Hide();
                 _shouldHideWhenAnimationComplete = false;
+            }
+
+            if (!isOpening)
+            {
+                _autoShowSuppressed = false;
             }
 
             return;
@@ -658,6 +694,11 @@ public class AnimatedDockableForm : Form
                 this.Height = targetHeight;
                 _isClosingAnimation = false;
 
+                if (!isOpening)
+                {
+                    _autoShowSuppressed = false;
+                }
+
                 if (!isOpening && _shouldHideWhenAnimationComplete)
                 {
                     this.Hide();
@@ -673,6 +714,85 @@ public class AnimatedDockableForm : Form
                 }
             }
         );
+    }
+
+    private void StopLocationAnimation()
+    {
+        if (_locationAnimationEngine != null && _locationAnimationEngine.IsRunning)
+        {
+            _locationAnimationEngine.Stop();
+        }
+        _locationAnimationEngine = null;
+        _isLocationAnimating = false;
+    }
+
+    private void StartLocationAnimation(Point targetLocation, Action completedAction, int? durationOverride = null, EasingFunctions.EasingType easing = EasingFunctions.EasingType.EaseOutCubic)
+    {
+        StopLocationAnimation();
+
+        Point startLocation = this.Location;
+
+        if (startLocation == targetLocation)
+        {
+            _isLocationAnimating = false;
+            if (completedAction != null)
+            {
+                completedAction();
+            }
+            return;
+        }
+
+        _isLocationAnimating = true;
+        int duration = durationOverride.HasValue ? Math.Max(1, durationOverride.Value) : _animationDuration;
+        _locationAnimationEngine = new AnimationEngine(duration, 30, easing);
+
+        _locationAnimationEngine.Start(
+            delegate(float progress)
+            {
+                int newX = startLocation.X + (int)((targetLocation.X - startLocation.X) * progress);
+                int newY = startLocation.Y + (int)((targetLocation.Y - startLocation.Y) * progress);
+                this.Location = new Point(newX, newY);
+            },
+            delegate
+            {
+                this.Location = targetLocation;
+                _isLocationAnimating = false;
+                if (completedAction != null)
+                {
+                    completedAction();
+                }
+            }
+        );
+    }
+
+    private void StartTwoStageUndockAnimation(Point stageOneTarget, int stageOneDuration)
+    {
+        int clampedDuration = Math.Min(_animationDuration, Math.Max(60, stageOneDuration));
+
+        StartLocationAnimation(stageOneTarget, () =>
+        {
+            Point cursor = Cursor.Position;
+            Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+
+            int stageTwoX = Math.Max(workingArea.Left, Math.Min(cursor.X - _dragStartFormPoint.X, workingArea.Right - this.Width));
+            int stageTwoY = Math.Max(workingArea.Top, Math.Min(cursor.Y - _dragStartFormPoint.Y, workingArea.Bottom - this.Height));
+            Point stageTwoTarget = new Point(stageTwoX, stageTwoY);
+
+            if (stageTwoTarget == this.Location)
+            {
+                Point completionCursor = Cursor.Position;
+                _dragStartScreenPoint = completionCursor;
+                _dragStartFormPoint = this.PointToClient(completionCursor);
+                return;
+            }
+
+            StartLocationAnimation(stageTwoTarget, () =>
+            {
+                Point completionCursor = Cursor.Position;
+                _dragStartScreenPoint = completionCursor;
+                _dragStartFormPoint = this.PointToClient(completionCursor);
+            });
+        }, clampedDuration);
     }
     
     private void ToggleFullScreenMode()
@@ -731,13 +851,15 @@ public class AnimatedDockableForm : Form
                     UpdateDockPosition();
                 }
                 _statusLabel.Text = _isFullScreen ? "フルスクリーンモードに切り替えました" : "ドックモードに切り替えました";
-                
+
                 // レイアウト更新を再開
                 if (_suspendLayout)
                 {
                     ResumeLayout(true);
                     _suspendLayout = false;
                 }
+
+                UpdateTopResizeHandles();
             }
         );
     }
@@ -749,7 +871,7 @@ public class AnimatedDockableForm : Form
         this.StartPosition = FormStartPosition.Manual;
         this.ShowInTaskbar = false;
         this.Size = new Size(500, 300);
-        this.BackColor = Color.White;
+        this.BackColor = MetroColors.Background;
         this.Opacity = 0.97;
         
         // ダブルバッファリングを有効化
@@ -770,75 +892,45 @@ public class AnimatedDockableForm : Form
         _headerPanel = new Panel();
         _headerPanel.Dock = DockStyle.Top;
         _headerPanel.Height = 30;
-        _headerPanel.BackColor = Color.FromArgb(40, 40, 40);
+        _headerPanel.BackColor = MetroColors.Primary;
         
         // Title label
         Label titleLabel = new Label();
         titleLabel.Text = "DockForm";
         titleLabel.ForeColor = Color.White;
+        titleLabel.BackColor = Color.Transparent;
         titleLabel.Location = new Point(10, 7);
         titleLabel.AutoSize = true;
         _headerPanel.Controls.Add(titleLabel);
         
         // ボタンを右側に配置するパネル
-        Panel buttonPanel = new Panel();
-        buttonPanel.Dock = DockStyle.Right;
-        buttonPanel.Height = _headerPanel.Height;
-        buttonPanel.Width = 80; // ボタン3つ分の幅
-        buttonPanel.BackColor = Color.Transparent;
-        _headerPanel.Controls.Add(buttonPanel);
-        
+        _buttonPanel = new Panel();
+        _buttonPanel.Dock = DockStyle.Right;
+        _buttonPanel.Height = _headerPanel.Height;
+        _buttonPanel.Width = 140; // ボタン4つ分の幅
+        _buttonPanel.BackColor = Color.Transparent;
+        _headerPanel.Controls.Add(_buttonPanel);
+
+        // Settings button (leftmost)
+        _settingsButton = CreateHeaderButton("⚙", SettingsButton_Click);
+        _settingsButton.Location = new Point(5, 3);
+        _buttonPanel.Controls.Add(_settingsButton);
+
         // Pin button
-        _pinButton = new Button();
-        _pinButton.Size = new Size(24, 24);
-        _pinButton.FlatStyle = FlatStyle.Flat;
-        _pinButton.FlatAppearance.BorderSize = 0;
-        _pinButton.Text = "📌";
-        _pinButton.Click += new EventHandler(PinButton_Click);
-        _pinButton.Location = new Point(5, 3);
-        _pinButton.Cursor = Cursors.Hand;
-        _pinButton.BackColor = Color.Transparent;
-        _pinButton.ForeColor = Color.White;
-        buttonPanel.Controls.Add(_pinButton);
-        
-        // FullScreen button right after topmost button
-        _fullscreenButton = new Button();
-        _fullscreenButton.Size = new Size(24, 24);
-        _fullscreenButton.FlatStyle = FlatStyle.Flat;
-        _fullscreenButton.FlatAppearance.BorderSize = 0;
-        _fullscreenButton.Text = "🔍";
-        _fullscreenButton.Click += new EventHandler(FullscreenButton_Click);
-        _fullscreenButton.Location = new Point(30, 3);
-        _fullscreenButton.Cursor = Cursors.Hand;
-        _fullscreenButton.BackColor = Color.Transparent;
-        _fullscreenButton.ForeColor = Color.White;
-        buttonPanel.Controls.Add(_fullscreenButton);
-        
+        _pinButton = CreateHeaderButton("📌", PinButton_Click);
+        _pinButton.Location = new Point(35, 3);
+        _buttonPanel.Controls.Add(_pinButton);
+
+        // FullScreen button right after pin button
+        _fullscreenButton = CreateHeaderButton("🔍", FullscreenButton_Click);
+        _fullscreenButton.Location = new Point(65, 3);
+        _buttonPanel.Controls.Add(_fullscreenButton);
+
         // Close button
-        Button closeButton = new Button();
-        closeButton.Size = new Size(24, 24);
-        closeButton.FlatStyle = FlatStyle.Flat;
-        closeButton.FlatAppearance.BorderSize = 0;
-        closeButton.Text = "✕";
-        closeButton.Click += (s, e) => { 
-            if (_isClosingAnimation || _isFullScreen)
-            {
-                // フルスクリーンモードまたはアニメーション実行中は即時非表示
-                this.Hide();
-            }
-            else
-            {
-                // アニメーションで徐々に閉じる
-                _shouldHideWhenAnimationComplete = true;
-                StartHeightAnimation(false, this.Height);
-            }
-        };
+        Button closeButton = CreateHeaderButton("✕", CloseHeaderButton_Click);
         closeButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        closeButton.Location = new Point(this.Width - 30, 3);
-        closeButton.Cursor = Cursors.Hand;
-        closeButton.BackColor = Color.Transparent;
-        closeButton.ForeColor = Color.White;
-        buttonPanel.Controls.Add(closeButton);
+        closeButton.Location = new Point(_buttonPanel.Width - closeButton.Width - 5, 3);
+        _buttonPanel.Controls.Add(closeButton);
         
         // Make header draggable
         _headerPanel.MouseDown += new MouseEventHandler(Form_MouseDown);
@@ -851,7 +943,7 @@ public class AnimatedDockableForm : Form
         _contentPanel = new DoubleBufferedPanel();
         _contentPanel.Dock = DockStyle.Fill;
         _contentPanel.Padding = new Padding(10, 40, 10, 10);
-        _contentPanel.BackColor = Color.White;
+        _contentPanel.BackColor = MetroColors.Background;
         this.Controls.Add(_contentPanel);
         
         // Status bar
@@ -868,6 +960,296 @@ public class AnimatedDockableForm : Form
         statusBar.Controls.Add(_statusLabel);
         
         this.Controls.Add(statusBar);
+
+        InitializeTopResizeHandles();
+        UpdateTopResizeHandles();
+    }
+
+    private Button CreateHeaderButton(string text, EventHandler clickHandler)
+    {
+        Button button = new Button();
+        button.Size = new Size(24, 24);
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.Text = text;
+        button.Cursor = Cursors.Hand;
+        button.BackColor = Color.Transparent;
+        button.ForeColor = Color.White;
+
+        if (clickHandler != null)
+        {
+            button.Click += clickHandler;
+        }
+
+        return button;
+    }
+
+    private void InitializeTopResizeHandles()
+    {
+        _topResizeHandle = CreateResizeHandlePanel(Cursors.SizeNS);
+        _topResizeHandle.MouseDown += TopResizeHandle_MouseDown;
+
+        _topLeftResizeHandle = CreateResizeHandlePanel(Cursors.SizeNWSE);
+        _topLeftResizeHandle.MouseDown += TopLeftResizeHandle_MouseDown;
+
+        _topRightResizeHandle = CreateResizeHandlePanel(Cursors.SizeNESW);
+        _topRightResizeHandle.MouseDown += TopRightResizeHandle_MouseDown;
+    }
+
+    private Panel CreateResizeHandlePanel(Cursor cursor)
+    {
+        Panel panel = new Panel();
+        panel.Size = new Size(0, 0);
+        ApplyResizeHandleTheme(panel);
+        panel.Visible = false;
+        panel.Cursor = cursor;
+        panel.TabStop = false;
+        panel.MouseMove += Form_MouseMove;
+        panel.MouseUp += Form_MouseUp;
+        this.Controls.Add(panel);
+        panel.BringToFront();
+        return panel;
+    }
+
+    private void ApplyResizeHandleTheme(Panel panel)
+    {
+        if (panel == null)
+            return;
+
+        panel.BackColor = MetroColors.Primary;
+    }
+
+    private void UpdateResizeHandleColors()
+    {
+        ApplyResizeHandleTheme(_topResizeHandle);
+        ApplyResizeHandleTheme(_topLeftResizeHandle);
+        ApplyResizeHandleTheme(_topRightResizeHandle);
+    }
+
+    private void TopResizeHandle_MouseDown(object sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        BeginResizeFromHandle(ResizeDirection.Top);
+    }
+
+    private void TopLeftResizeHandle_MouseDown(object sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        BeginResizeFromHandle(ResizeDirection.TopLeft);
+    }
+
+    private void TopRightResizeHandle_MouseDown(object sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        BeginResizeFromHandle(ResizeDirection.TopRight);
+    }
+
+    private void BeginResizeFromHandle(ResizeDirection direction)
+    {
+        if (_isResizing)
+            return;
+
+        if (_isFullScreen)
+            return;
+
+        if (!_isManuallyUndocked)
+            return;
+
+        _currentResizeDirection = direction;
+        _isResizing = true;
+        _resizeStartScreenPoint = Cursor.Position;
+        _originalResizeSize = this.Size;
+
+        if (!_allowTopResize)
+        {
+            _allowTopResize = true;
+        }
+
+        if (_animationEngine != null && _animationEngine.IsRunning)
+        {
+            StopAnimationAndResumeLayoutIfNeeded();
+            _isClosingAnimation = false;
+            _shouldHideWhenAnimationComplete = false;
+        }
+    }
+
+    private void UpdateTopResizeHandles()
+    {
+        if (_topResizeHandle == null || _topLeftResizeHandle == null || _topRightResizeHandle == null)
+            return;
+
+        bool showHandles = _isManuallyUndocked && !_isFullScreen && _allowTopResize;
+
+        int handleHeight = RESIZE_BORDER_SIZE;
+        int cornerWidth = RESIZE_BORDER_SIZE * 2;
+        int centerWidth = this.Width - (cornerWidth * 2);
+        if (centerWidth < 0)
+            centerWidth = 0;
+
+        _topResizeHandle.Visible = showHandles;
+        _topLeftResizeHandle.Visible = showHandles;
+        _topRightResizeHandle.Visible = showHandles;
+
+        if (showHandles)
+        {
+            _topLeftResizeHandle.Bounds = new Rectangle(0, 0, cornerWidth, handleHeight);
+            _topRightResizeHandle.Bounds = new Rectangle(Math.Max(0, this.Width - cornerWidth), 0, cornerWidth, handleHeight);
+            _topResizeHandle.Bounds = new Rectangle(cornerWidth, 0, centerWidth, handleHeight);
+
+            _topLeftResizeHandle.BringToFront();
+            _topRightResizeHandle.BringToFront();
+            _topResizeHandle.BringToFront();
+        }
+    }
+
+    private void CloseHeaderButton_Click(object sender, EventArgs e)
+    {
+        if (_isClosingAnimation || _isFullScreen)
+        {
+            this.Hide();
+            return;
+        }
+
+        Action initiateClose = delegate()
+        {
+            if (_hideDelayTimer.Enabled)
+            {
+                _hideDelayTimer.Stop();
+            }
+            _mouseLeavePending = false;
+
+            if (_showDelayTimer.Enabled)
+            {
+                _showDelayTimer.Stop();
+            }
+            _showDelayPending = false;
+
+            _shouldHideWhenAnimationComplete = true;
+            _autoShowSuppressed = true;
+            StartHeightAnimation(false, this.Height);
+        };
+
+        if (_isManuallyUndocked || this.Top != 0 || _dockPosition != DockPosition.Top)
+        {
+            SetManualUndockState(false);
+            _dockPosition = DockPosition.Top;
+
+            Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+            int clampedX = Math.Max(workingArea.Left, Math.Min(this.Location.X, workingArea.Right - this.Width));
+            Point targetLocation = new Point(clampedX, 0);
+            StartLocationAnimation(targetLocation, delegate()
+            {
+                this.Location = new Point(clampedX, 0);
+                _triggerX = clampedX;
+                _formLeftPosition = clampedX;
+                UpdateTriggerArea();
+                _dockLocation = this.Location;
+                initiateClose();
+            });
+        }
+        else
+        {
+            initiateClose();
+        }
+    }
+
+    private void SettingsButton_Click(object sender, EventArgs e)
+    {
+        Color currentThemeColor = SchedulerSettingsManager.ThemeColor;
+        string currentDirectory = SchedulerSettingsManager.ScheduleDirectory;
+
+        using (SchedulerSettingsForm form = new SchedulerSettingsForm(currentThemeColor, currentDirectory))
+        {
+            if (form.ShowDialog(this) == DialogResult.OK)
+            {
+                Color selectedColor = form.SelectedThemeColor;
+                string selectedDirectory = form.SelectedDirectory;
+
+                bool themeChanged = selectedColor.ToArgb() != currentThemeColor.ToArgb();
+                bool directoryChanged = !String.Equals(selectedDirectory, currentDirectory, StringComparison.OrdinalIgnoreCase);
+
+                bool moveExisting = false;
+
+                if (directoryChanged)
+                {
+                    DialogResult moveResult = MessageBox.Show(this,
+                        "既存のスケジュールファイルを新しい保存先に移動しますか？",
+                        "スケジュールファイルの移動",
+                        MessageBoxButtons.YesNoCancel,
+                        MessageBoxIcon.Question);
+
+                    if (moveResult == DialogResult.Cancel)
+                    {
+                        return;
+                    }
+
+                    moveExisting = moveResult == DialogResult.Yes;
+                }
+
+                if (directoryChanged)
+                {
+                    if (!Directory.Exists(selectedDirectory))
+                    {
+                        Directory.CreateDirectory(selectedDirectory);
+                    }
+
+                    if (moveExisting)
+                    {
+                        bool moved = ScheduleStorage.MoveStorageFile(currentDirectory, selectedDirectory);
+                        if (!moved)
+                        {
+                            selectedDirectory = currentDirectory;
+                            directoryChanged = false;
+                        }
+                    }
+                }
+
+                SchedulerSettingsManager.UpdateSettings(selectedColor, selectedDirectory);
+                SchedulerSettingsManager.EnsureScheduleDirectoryExists();
+
+                if (themeChanged)
+                {
+                    MetroColors.ApplyTheme(selectedColor);
+                    ApplyThemeToControls();
+                    DockableFormWithMetroUI.ApplyThemeToComponents();
+                }
+
+                if (directoryChanged)
+                {
+                    DockableFormWithMetroUI.ReloadAppointments();
+                }
+            }
+        }
+    }
+
+    private void ApplyThemeToControls()
+    {
+        this.BackColor = MetroColors.Background;
+
+        if (_contentPanel != null)
+        {
+            _contentPanel.BackColor = MetroColors.Background;
+            _contentPanel.Invalidate();
+        }
+
+        if (_statusLabel != null)
+        {
+            _statusLabel.ForeColor = MetroColors.Text;
+        }
+
+        if (_headerPanel != null)
+        {
+            _headerPanel.BackColor = MetroColors.Primary;
+            _headerPanel.Invalidate();
+        }
+
+        UpdateResizeHandleColors();
     }
     
     // リサイズ機能の初期化
@@ -1130,7 +1512,9 @@ public class AnimatedDockableForm : Form
             _triggerWidth = this.Width;
             UpdateTriggerArea();
         }
-        
+
+        UpdateTopResizeHandles();
+
         // ステータスバーに現在のサイズを表示
         _statusLabel.Text = "サイズ変更: " + this.Width + " x " + this.Height;
     }
@@ -1199,6 +1583,50 @@ public class AnimatedDockableForm : Form
         
         _notifyIcon.ContextMenuStrip = menu;
         _notifyIcon.DoubleClick += new EventHandler(NotifyIcon_DoubleClick);
+    }
+
+    public void ShowDockedFormOnTop(bool ensureOpenAnimation = true)
+    {
+        if (this.InvokeRequired)
+        {
+            this.BeginInvoke(new Action(() => ShowDockedFormOnTop(ensureOpenAnimation)));
+            return;
+        }
+
+        StopAnimationAndResumeLayoutIfNeeded();
+        _isClosingAnimation = false;
+        _shouldHideWhenAnimationComplete = false;
+        _autoShowSuppressed = false;
+
+        if (!this.Visible)
+        {
+            this.Show();
+        }
+
+        if (this.WindowState == FormWindowState.Minimized)
+        {
+            this.WindowState = FormWindowState.Normal;
+        }
+
+        bool restoreTopMost = this.TopMost;
+        if (!restoreTopMost)
+        {
+            this.TopMost = true;
+        }
+
+        this.Activate();
+        this.BringToFront();
+
+        if (!restoreTopMost && _pinMode != PinMode.PinnedTopMost)
+        {
+            this.TopMost = false;
+        }
+
+        if (ensureOpenAnimation && !_isFullScreen && _animationEngine != null)
+        {
+            int currentHeight = Math.Max(0, Math.Min(this.Height, _originalHeight));
+            StartHeightAnimation(true, currentHeight);
+        }
     }
     
     private void ShowItem_Click(object sender, EventArgs e)
@@ -1362,6 +1790,26 @@ public class AnimatedDockableForm : Form
         if (_isResizing)
             return;
 
+        if (_isManuallyUndocked)
+        {
+            if (_hideDelayTimer.Enabled)
+            {
+                _hideDelayTimer.Stop();
+            }
+            _mouseLeavePending = false;
+
+            if (_showDelayTimer.Enabled)
+            {
+                _showDelayTimer.Stop();
+            }
+            _showDelayPending = false;
+
+            return;
+        }
+
+        if (_autoShowSuppressed)
+            return;
+
         bool isAnimating = _animationEngine.IsRunning;
 
         // 開くアニメーション中は処理をスキップし、閉じるアニメーション中は再フォーカス検知のため継続
@@ -1519,8 +1967,7 @@ public class AnimatedDockableForm : Form
     
     private void NotifyIcon_DoubleClick(object sender, EventArgs e)
     {
-        this.Show();
-        this.BringToFront();
+        ShowDockedFormOnTop();
     }
     
     // Form_MouseDown イベントハンドラ（ドラッグとリサイズの両方に対応）
@@ -1565,6 +2012,8 @@ public class AnimatedDockableForm : Form
                 // リサイズ領域外ならドラッグ移動開始
                 _isDragging = true;
                 _dragStartPoint = new Point(e.X, e.Y);
+                _dragStartScreenPoint = Cursor.Position;
+                _dragStartFormPoint = clientPoint;
             }
         }
     }
@@ -1582,14 +2031,26 @@ public class AnimatedDockableForm : Form
             // フルスクリーンモード時はドラッグ無効
             if (_isFullScreen)
                 return;
-                
+
+            if (_isLocationAnimating)
+                return;
+
             Point newLocation = this.Location;
-            
-            if (_dockPosition == DockPosition.Top)
+
+            if (_dockPosition == DockPosition.Top && !_isManuallyUndocked)
             {
+                Point currentScreenPoint = Cursor.Position;
+                int verticalDelta = currentScreenPoint.Y - _dragStartScreenPoint.Y;
+
+                if (verticalDelta > DockDetachThreshold)
+                {
+                    DetachFromTopDock(currentScreenPoint, verticalDelta);
+                    return;
+                }
+
                 // When docked to top, only allow horizontal movement
                 newLocation.X = this.Location.X + (e.X - _dragStartPoint.X);
-                
+
                 // Keep within screen bounds
                 if (newLocation.X < 0)
                     newLocation.X = 0;
@@ -1597,7 +2058,7 @@ public class AnimatedDockableForm : Form
                     newLocation.X = Screen.PrimaryScreen.WorkingArea.Width - this.Width;
                 
                 this.Location = newLocation;
-                
+
                 // Update trigger area position
                 _formLeftPosition = newLocation.X;
                 _triggerX = newLocation.X;
@@ -1626,13 +2087,19 @@ public class AnimatedDockableForm : Form
                 newLocation.X = this.Location.X + (e.X - _dragStartPoint.X);
                 newLocation.Y = this.Location.Y + (e.Y - _dragStartPoint.Y);
                 this.Location = newLocation;
+
+                if (_isManuallyUndocked && newLocation.Y <= 0)
+                {
+                    RedockToTop(sender, e);
+                    return;
+                }
             }
-            
+
             // 現在の位置をドック位置として保存
             _dockLocation = this.Location;
         }
     }
-    
+
     // Form_MouseUp イベントハンドラ（ドラッグとリサイズの両方に対応）
     private void Form_MouseUp(object sender, MouseEventArgs e)
     {
@@ -1660,6 +2127,69 @@ public class AnimatedDockableForm : Form
         }
         
         _isDragging = false;
+    }
+
+    private void SetManualUndockState(bool isUndocked)
+    {
+        _isManuallyUndocked = isUndocked;
+        AllowTopResize = isUndocked;
+        UpdateTopResizeHandles();
+    }
+
+    private void DetachFromTopDock(Point currentScreenPoint, int verticalDelta)
+    {
+        StopAnimationAndResumeLayoutIfNeeded();
+        _isClosingAnimation = false;
+        _shouldHideWhenAnimationComplete = false;
+
+        _dockPosition = DockPosition.None;
+        SetManualUndockState(true);
+
+        if (_hideDelayTimer.Enabled)
+        {
+            _hideDelayTimer.Stop();
+        }
+        _mouseLeavePending = false;
+
+        if (_showDelayTimer.Enabled)
+        {
+            _showDelayTimer.Stop();
+        }
+        _showDelayPending = false;
+
+        Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+        int targetX = currentScreenPoint.X - _dragStartFormPoint.X;
+        int targetY = currentScreenPoint.Y - _dragStartFormPoint.Y;
+
+        targetX = Math.Max(workingArea.Left, Math.Min(targetX, workingArea.Right - this.Width));
+        targetY = Math.Max(workingArea.Top, Math.Min(targetY, workingArea.Bottom - this.Height));
+
+        int extraDrag = Math.Max(0, Math.Abs(verticalDelta) - DockDetachThreshold);
+        float dragRatio = Math.Min(1f, extraDrag / (float)Math.Max(1, DockDetachThreshold));
+        int stageOneDuration = (int)(_animationDuration * (1f - 0.5f * dragRatio));
+        stageOneDuration = Math.Max(_animationDuration / 3, stageOneDuration);
+
+        StartTwoStageUndockAnimation(new Point(targetX, targetY), stageOneDuration);
+    }
+
+    private void RedockToTop(object sender, MouseEventArgs e)
+    {
+        Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+        int clampedX = Math.Max(workingArea.Left, Math.Min(this.Location.X, workingArea.Right - this.Width));
+        this.Location = new Point(clampedX, 0);
+
+        _dockPosition = DockPosition.Top;
+        SetManualUndockState(false);
+        _triggerX = clampedX;
+        _formLeftPosition = clampedX;
+        UpdateTriggerArea();
+        _dockLocation = this.Location;
+
+        Point cursorScreen = Cursor.Position;
+        _dragStartScreenPoint = cursorScreen;
+        _dragStartFormPoint = this.PointToClient(cursorScreen);
+
+        _dragStartPoint = e.Location;
     }
     
     // ディスポーズ処理のオーバーライド
@@ -1694,13 +2224,174 @@ public class AnimatedDockableForm : Form
     [STAThread]
     public static void Main()
     {
+        SchedulerSettingsManager.Load();
+        MetroColors.ApplyTheme(SchedulerSettingsManager.ThemeColor);
+        SchedulerSettingsManager.EnsureScheduleDirectoryExists();
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        
+
         AnimatedDockableForm form = new AnimatedDockableForm();
         Application.Run(form);
     }
 }
+
+public class SchedulerSettingsForm : Form
+{
+    private Panel _colorPreviewPanel;
+    private TextBox _directoryTextBox;
+    private Button _okButton;
+    private Button _cancelButton;
+    private Color _selectedColor;
+    private string _selectedDirectory;
+
+    public SchedulerSettingsForm(Color currentColor, string currentDirectory)
+    {
+        _selectedColor = currentColor;
+        _selectedDirectory = currentDirectory;
+        InitializeComponents();
+    }
+
+    public Color SelectedThemeColor
+    {
+        get { return _selectedColor; }
+    }
+
+    public string SelectedDirectory
+    {
+        get { return _selectedDirectory; }
+    }
+
+    private void InitializeComponents()
+    {
+        this.Text = "設定";
+        this.FormBorderStyle = FormBorderStyle.FixedDialog;
+        this.StartPosition = FormStartPosition.CenterParent;
+        this.ClientSize = new Size(380, 210);
+        this.MaximizeBox = false;
+        this.MinimizeBox = false;
+        this.ShowInTaskbar = false;
+
+        Label themeLabel = new Label();
+        themeLabel.Text = "テーマカラー";
+        themeLabel.AutoSize = true;
+        themeLabel.Location = new Point(20, 20);
+        this.Controls.Add(themeLabel);
+
+        _colorPreviewPanel = new Panel();
+        _colorPreviewPanel.Size = new Size(60, 24);
+        _colorPreviewPanel.Location = new Point(20, 50);
+        _colorPreviewPanel.BorderStyle = BorderStyle.FixedSingle;
+        _colorPreviewPanel.BackColor = _selectedColor;
+        this.Controls.Add(_colorPreviewPanel);
+
+        Button colorButton = new Button();
+        colorButton.Text = "変更...";
+        colorButton.Size = new Size(80, 24);
+        colorButton.Location = new Point(100, 50);
+        colorButton.Click += ColorButton_Click;
+        this.Controls.Add(colorButton);
+
+        Label directoryLabel = new Label();
+        directoryLabel.Text = "スケジュール保存先";
+        directoryLabel.AutoSize = true;
+        directoryLabel.Location = new Point(20, 95);
+        this.Controls.Add(directoryLabel);
+
+        _directoryTextBox = new TextBox();
+        _directoryTextBox.Size = new Size(250, 24);
+        _directoryTextBox.Location = new Point(20, 120);
+        _directoryTextBox.Text = _selectedDirectory;
+        this.Controls.Add(_directoryTextBox);
+
+        Button browseButton = new Button();
+        browseButton.Text = "参照...";
+        browseButton.Size = new Size(80, 24);
+        browseButton.Location = new Point(280, 118);
+        browseButton.Click += BrowseButton_Click;
+        this.Controls.Add(browseButton);
+
+        _okButton = new Button();
+        _okButton.Text = "OK";
+        _okButton.Size = new Size(80, 28);
+        _okButton.Location = new Point(200, 160);
+        _okButton.DialogResult = DialogResult.OK;
+        _okButton.Click += OkButton_Click;
+        this.Controls.Add(_okButton);
+
+        _cancelButton = new Button();
+        _cancelButton.Text = "キャンセル";
+        _cancelButton.Size = new Size(80, 28);
+        _cancelButton.Location = new Point(290, 160);
+        _cancelButton.DialogResult = DialogResult.Cancel;
+        this.Controls.Add(_cancelButton);
+
+        this.AcceptButton = _okButton;
+        this.CancelButton = _cancelButton;
+    }
+
+    private void ColorButton_Click(object sender, EventArgs e)
+    {
+        using (ColorDialog dialog = new ColorDialog())
+        {
+            dialog.FullOpen = true;
+            dialog.Color = _selectedColor;
+
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                _selectedColor = dialog.Color;
+                _colorPreviewPanel.BackColor = _selectedColor;
+            }
+        }
+    }
+
+    private void BrowseButton_Click(object sender, EventArgs e)
+    {
+        using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+        {
+            dialog.Description = "スケジュールファイルの保存先を選択してください。";
+
+            if (!String.IsNullOrEmpty(_directoryTextBox.Text) && Directory.Exists(_directoryTextBox.Text))
+            {
+                dialog.SelectedPath = _directoryTextBox.Text;
+            }
+
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                _directoryTextBox.Text = dialog.SelectedPath;
+            }
+        }
+    }
+
+    private void OkButton_Click(object sender, EventArgs e)
+    {
+        string path = _directoryTextBox.Text;
+
+        if (String.IsNullOrEmpty(path))
+        {
+            MessageBox.Show(this, "保存先ディレクトリを入力してください。", "エラー",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            this.DialogResult = DialogResult.None;
+            return;
+        }
+
+        try
+        {
+            path = Path.GetFullPath(path);
+        }
+        catch (Exception)
+        {
+            MessageBox.Show(this, "保存先ディレクトリのパスが正しくありません。", "エラー",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            this.DialogResult = DialogResult.None;
+            return;
+        }
+
+        _selectedDirectory = path;
+        this.DialogResult = DialogResult.OK;
+        this.Close();
+    }
+}
+
 #endregion
 
 #region MetroUI Classes
@@ -1827,6 +2518,7 @@ namespace MetroUI
         public static Color Danger = Color.FromArgb(217, 83, 79);
         public static Color Info = Color.FromArgb(91, 192, 222);
         public static Color InProgress = Color.FromArgb(135, 206, 250); // LightSkyBlue
+        public static readonly Color TimelineMarker = Color.FromArgb(0, 120, 215);
 
         public static Color[] AccentColors = new Color[]
         {
@@ -1838,6 +2530,13 @@ namespace MetroUI
             Color.FromArgb(170, 0, 170),    // Magenta
             Color.FromArgb(118, 118, 118)   // Gray
         };
+
+        public static void ApplyTheme(Color primaryColor)
+        {
+            Primary = primaryColor;
+            Secondary = ControlPaint.Dark(primaryColor, 0.2f);
+            Info = ControlPaint.Light(primaryColor, 0.4f);
+        }
 
         /// <summary>
         /// 予定の状態に応じた色を取得
@@ -1935,6 +2634,7 @@ namespace MetroUI
     {
         private Appointment _appointment;
         private Button _closeButton;
+        private Button _detailsButton;
         private Label _titleLabel;
         private Label _timeLabel;
         private Label _messageLabel;
@@ -2018,6 +2718,18 @@ namespace MetroUI
             _closeButton.Click += (sender, e) => this.Close();
             this.Controls.Add(_closeButton);
 
+            _detailsButton = new Button();
+            _detailsButton.Text = "詳細表示";
+            _detailsButton.Font = new Font("Segoe UI", 9, FontStyle.Regular);
+            _detailsButton.Size = new Size(90, 30);
+            _detailsButton.Location = new Point(_closeButton.Left - _detailsButton.Width - 10, _closeButton.Top);
+            _detailsButton.FlatStyle = FlatStyle.Flat;
+            _detailsButton.FlatAppearance.BorderSize = 0;
+            _detailsButton.BackColor = MetroColors.Secondary;
+            _detailsButton.ForeColor = Color.White;
+            _detailsButton.Click += DetailsButton_Click;
+            this.Controls.Add(_detailsButton);
+
             // マウスイベント
             this.MouseDown += NotificationWindow_MouseDown;
             this.MouseMove += NotificationWindow_MouseMove;
@@ -2058,14 +2770,19 @@ namespace MetroUI
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            
+
             // 左端に色付きの縦線を描画
             using (SolidBrush lineBrush = new SolidBrush(MetroColors.Primary))
             {
                 g.FillRectangle(lineBrush, new Rectangle(0, 0, 5, this.Height));
             }
         }
-        
+
+        private void DetailsButton_Click(object sender, EventArgs e)
+        {
+            DockableFormWithMetroUI.ShowAppointmentDetails(_appointment);
+        }
+
         public void UpdateTimeRemainingText()
         {
             DateTime now = DateTime.Now;
@@ -2239,6 +2956,13 @@ namespace MetroUI
                 Invalidate();
             }
         }
+
+        public virtual void ApplyTheme()
+        {
+            BackColor = MetroColors.Background;
+            ForeColor = MetroColors.Text;
+            Invalidate();
+        }
     }
 
     #endregion
@@ -2330,6 +3054,12 @@ namespace MetroUI
             _dayRects = new Rectangle[42]; // 最大6週 x 7日
             Size = new Size(280, 320);
             CalculateRectangles();
+        }
+
+        public override void ApplyTheme()
+        {
+            base.ApplyTheme();
+            Invalidate();
         }
 
         #endregion
@@ -2941,6 +3671,13 @@ namespace MetroUI
             this.MouseLeave += MetroDigitalClock_MouseLeave;
         }
 
+        public override void ApplyTheme()
+        {
+            base.ApplyTheme();
+            _progressColor = MetroColors.Info;
+            Invalidate();
+        }
+
         #endregion
 
         #region Methods
@@ -3402,7 +4139,7 @@ namespace MetroUI
                 }
                 
                 // 現在位置に丸いマーカー
-                using (SolidBrush currentBrush = new SolidBrush(MetroColors.Primary))
+                using (SolidBrush currentBrush = new SolidBrush(MetroColors.TimelineMarker))
                 {
                     g.FillEllipse(currentBrush, _timelineRect.Left - 5, timelineY - 5, 10, 10);
                 }
@@ -3488,7 +4225,7 @@ namespace MetroUI
             }
             
             // 現在位置に丸いマーカー
-            using (SolidBrush currentBrush = new SolidBrush(MetroColors.Primary))
+            using (SolidBrush currentBrush = new SolidBrush(MetroColors.TimelineMarker))
             {
                 g.FillEllipse(currentBrush, startX - 5, timelineY - 5, 10, 10);
             }
@@ -3579,6 +4316,7 @@ namespace MetroUI
         private bool _isUpdatingScrollBar;
         private bool _isUpdatingTaskLayout;
         private int _contentHeight;
+        private Appointment _pendingFocusAppointment;
 
         [System.ComponentModel.Browsable(true)]
         [System.ComponentModel.Category("Metro Task Manager")]
@@ -3646,6 +4384,22 @@ namespace MetroUI
                     return Math.Max(MinimumSize.Width, 280);
                 return _headerPreferredWidth;
             }
+        }
+
+        public void FocusAppointment(Appointment appointment)
+        {
+            if (appointment == null)
+                return;
+
+            _pendingFocusAppointment = appointment;
+
+            if (_calendar != null && appointment.StartTime.Date != _calendar.SelectedDate.Date)
+            {
+                _calendar.SelectedDate = appointment.StartTime.Date;
+                return;
+            }
+
+            EnsurePendingFocusTarget();
         }
 
         /// <summary>
@@ -3718,6 +4472,23 @@ namespace MetroUI
             _titleScrollTimer.Interval = 50; // 50msごとに更新
             _titleScrollTimer.Tick += TitleScrollTimer_Tick;
             _titleScrollTimer.Start();
+        }
+
+        public override void ApplyTheme()
+        {
+            base.ApplyTheme();
+            if (_dateHeaderLabel != null)
+            {
+                _dateHeaderLabel.ForeColor = MetroColors.Primary;
+            }
+
+            Invalidate();
+        }
+
+        public void ReloadTasks()
+        {
+            LoadTasks();
+            Invalidate();
         }
 
         private void DateHeaderLabel_TextChanged(object sender, EventArgs e)
@@ -4050,6 +4821,8 @@ namespace MetroUI
                     iteration++;
                 }
                 while (needsAnotherPass && iteration < 5);
+
+                EnsurePendingFocusTarget();
             }
             finally
             {
@@ -4083,6 +4856,27 @@ namespace MetroUI
                 UpdateTaskUIItems();
                 Invalidate();
             }
+        }
+
+        private void EnsurePendingFocusTarget()
+        {
+            if (_pendingFocusAppointment == null)
+                return;
+
+            if (_taskUIItems == null || _taskUIItems.Count == 0)
+                return;
+
+            TaskItemUI targetItem = _taskUIItems.FirstOrDefault(item => item.Task == _pendingFocusAppointment);
+            if (targetItem == null)
+                return;
+
+            int headerHeight = (_dateHeaderLabel != null) ? _dateHeaderLabel.Bottom + 10 : 50;
+            int absoluteTop = targetItem.Bounds.Top + _scrollPosition;
+            int desiredScroll = absoluteTop - headerHeight;
+
+            SetScrollPosition(desiredScroll);
+            _pendingFocusAppointment = null;
+            Invalidate();
         }
 
         /// <summary>
@@ -5022,6 +5816,20 @@ namespace MetroUI
                 }
             }
 
+            if (_dateHeaderLabel != null && !String.IsNullOrEmpty(_dateHeaderLabel.Text))
+            {
+                Rectangle headerOverlayRect = new Rectangle(
+                    0,
+                    _dateHeaderLabel.Top,
+                    Width,
+                    _dateHeaderLabel.Height);
+
+                using (SolidBrush overlayBrush = new SolidBrush(Color.FromArgb(180, 255, 255, 255)))
+                {
+                    g.FillRectangle(overlayBrush, headerOverlayRect);
+                }
+            }
+
             // コンテキストメニューの描画
             if (_showContextMenu)
             {
@@ -5115,8 +5923,8 @@ namespace MetroUI
             // 追加ボタン（右下の+ボタン）
             if (!_showMemoPage)
             {
-                using (SolidBrush addBtnBrush = new SolidBrush(_addButtonHover ? 
-                    Color.FromArgb(0, 99, 177) : MetroColors.Primary))
+                using (SolidBrush addBtnBrush = new SolidBrush(_addButtonHover ?
+                    MetroColors.Secondary : MetroColors.Primary))
                 {
                     DrawingUtils.FillRoundedRectangle(g, addBtnBrush, _addButtonRect, 20);
                     
@@ -5823,27 +6631,216 @@ namespace MetroUI
 
 #region ScheduleStorage
 
+public static class SchedulerSettingsManager
+{
+    private const string SettingsFileName = "settings.json";
+    private const string DefaultFolderName = ".dockableScheduler";
+    private static SchedulerSettingsData _currentSettings;
+    private static bool _isLoaded;
+    private static readonly object _syncRoot = new object();
+
+    private class SchedulerSettingsData
+    {
+        public int ThemeColorArgb { get; set; }
+        public string ScheduleDirectory { get; set; }
+    }
+
+    public static string DefaultScheduleDirectory
+    {
+        get
+        {
+            string userDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return Path.Combine(userDirectory, DefaultFolderName);
+        }
+    }
+
+    public static void Load()
+    {
+        lock (_syncRoot)
+        {
+            if (_isLoaded)
+                return;
+
+            string settingsDirectory = DefaultScheduleDirectory;
+            EnsureDirectoryExists(settingsDirectory);
+            string settingsPath = Path.Combine(settingsDirectory, SettingsFileName);
+
+            if (File.Exists(settingsPath))
+            {
+                try
+                {
+                    JavaScriptSerializer serializer = new JavaScriptSerializer();
+                    _currentSettings = serializer.Deserialize<SchedulerSettingsData>(File.ReadAllText(settingsPath));
+                }
+                catch
+                {
+                    _currentSettings = null;
+                }
+            }
+
+            if (_currentSettings == null)
+            {
+                _currentSettings = new SchedulerSettingsData();
+            }
+
+            if (_currentSettings.ThemeColorArgb == 0)
+            {
+                Color defaultColor = Color.FromArgb(0, 120, 215);
+                _currentSettings.ThemeColorArgb = defaultColor.ToArgb();
+            }
+
+            if (String.IsNullOrEmpty(_currentSettings.ScheduleDirectory))
+            {
+                _currentSettings.ScheduleDirectory = settingsDirectory;
+            }
+
+            EnsureDirectoryExists(_currentSettings.ScheduleDirectory);
+            SaveInternal(settingsPath);
+            _isLoaded = true;
+        }
+    }
+
+    private static void EnsureLoaded()
+    {
+        if (!_isLoaded)
+        {
+            Load();
+        }
+    }
+
+    private static void SaveInternal(string settingsPath)
+    {
+        JavaScriptSerializer serializer = new JavaScriptSerializer();
+        File.WriteAllText(settingsPath, serializer.Serialize(_currentSettings));
+    }
+
+    public static void Save()
+    {
+        lock (_syncRoot)
+        {
+            EnsureLoaded();
+            string settingsPath = Path.Combine(DefaultScheduleDirectory, SettingsFileName);
+            EnsureDirectoryExists(DefaultScheduleDirectory);
+            SaveInternal(settingsPath);
+        }
+    }
+
+    public static Color ThemeColor
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                EnsureLoaded();
+                return Color.FromArgb(_currentSettings.ThemeColorArgb);
+            }
+        }
+    }
+
+    public static string ScheduleDirectory
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                EnsureLoaded();
+                return _currentSettings.ScheduleDirectory;
+            }
+        }
+    }
+
+    public static void UpdateSettings(Color themeColor, string scheduleDirectory)
+    {
+        lock (_syncRoot)
+        {
+            EnsureLoaded();
+            _currentSettings.ThemeColorArgb = themeColor.ToArgb();
+            _currentSettings.ScheduleDirectory = scheduleDirectory;
+            EnsureDirectoryExists(_currentSettings.ScheduleDirectory);
+            Save();
+        }
+    }
+
+    public static void EnsureScheduleDirectoryExists()
+    {
+        lock (_syncRoot)
+        {
+            EnsureLoaded();
+            EnsureDirectoryExists(_currentSettings.ScheduleDirectory);
+        }
+    }
+
+    public static string GetSettingsFilePath()
+    {
+        return Path.Combine(DefaultScheduleDirectory, SettingsFileName);
+    }
+
+    private static void EnsureDirectoryExists(string directory)
+    {
+        if (!Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+    }
+}
+
 public static class ScheduleStorage
 {
-    private const string StorageFolderName = ".dockableScheduler";
     private const string StorageFileName = "appointments.json";
 
     public static string GetStorageDirectory()
     {
-        string userDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        string folderPath = Path.Combine(userDirectory, StorageFolderName);
-
-        if (!Directory.Exists(folderPath))
-        {
-            Directory.CreateDirectory(folderPath);
-        }
-
-        return folderPath;
+        SchedulerSettingsManager.EnsureScheduleDirectoryExists();
+        return SchedulerSettingsManager.ScheduleDirectory;
     }
 
     public static string GetStorageFilePath()
     {
         return Path.Combine(GetStorageDirectory(), StorageFileName);
+    }
+
+    public static string GetStorageFilePath(string directory)
+    {
+        if (String.IsNullOrEmpty(directory))
+            return GetStorageFilePath();
+
+        return Path.Combine(directory, StorageFileName);
+    }
+
+    public static bool MoveStorageFile(string sourceDirectory, string destinationDirectory)
+    {
+        try
+        {
+            if (String.IsNullOrEmpty(sourceDirectory) || String.IsNullOrEmpty(destinationDirectory))
+                return false;
+
+            string sourcePath = Path.Combine(sourceDirectory, StorageFileName);
+            if (!File.Exists(sourcePath))
+                return false;
+
+            string destinationPath = Path.Combine(destinationDirectory, StorageFileName);
+            if (String.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (!Directory.Exists(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+
+            if (File.Exists(destinationPath))
+            {
+                File.Delete(destinationPath);
+            }
+
+            File.Move(sourcePath, destinationPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("スケジュールファイルの移動に失敗しました: " + ex.Message, "エラー",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return false;
+        }
     }
 
     public static List<MetroUI.Appointment> LoadAppointments()
@@ -6057,16 +7054,19 @@ public class DockableFormWithMetroUI
     private static int _leftPanelPreferredWidth;
     private static int _calendarPreferredHeight;
     private static int _timelinePreferredHeight;
-    
+
     // メインエントリーポイント
     [STAThread]
     public static void Main()
     {
         try
         {
+            SchedulerSettingsManager.Load();
+            MetroColors.ApplyTheme(SchedulerSettingsManager.ThemeColor);
+            SchedulerSettingsManager.EnsureScheduleDirectoryExists();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            
+
             // DockableFormの作成
             _dockForm = new AnimatedDockableForm();
             _dockForm.Text = "MetroUI Dashboard";
@@ -6091,11 +7091,87 @@ public class DockableFormWithMetroUI
         }
         catch (Exception ex)
         {
-            MessageBox.Show("アプリケーションエラー: " + ex.Message + "\n" + ex.StackTrace, "エラー", 
+            MessageBox.Show("アプリケーションエラー: " + ex.Message + "\n" + ex.StackTrace, "エラー",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
-    
+
+    public static void ApplyThemeToComponents()
+    {
+        if (_container != null)
+        {
+            _container.BackColor = MetroColors.Background;
+        }
+
+        if (_calendar != null)
+        {
+            _calendar.ApplyTheme();
+        }
+
+        if (_clock != null)
+        {
+            _clock.ApplyTheme();
+        }
+
+        if (_taskManager != null)
+        {
+            _taskManager.ApplyTheme();
+        }
+    }
+
+    public static void ReloadAppointments()
+    {
+        if (_calendar == null || _taskManager == null)
+            return;
+
+        _isLoadingAppointments = true;
+        try
+        {
+            _calendar.Appointments.Clear();
+
+            List<MetroUI.Appointment> appointments = ScheduleStorage.LoadAppointments();
+
+            if (appointments != null)
+            {
+                foreach (MetroUI.Appointment appointment in appointments)
+                {
+                    _calendar.AddAppointment(appointment);
+                }
+            }
+
+            _calendar.UpdateAppointmentStatuses();
+            _taskManager.ReloadTasks();
+        }
+        finally
+        {
+            _isLoadingAppointments = false;
+        }
+    }
+
+    public static void ShowAppointmentDetails(MetroUI.Appointment appointment)
+    {
+        if (appointment == null || _dockForm == null)
+            return;
+
+        if (_dockForm.InvokeRequired)
+        {
+            _dockForm.BeginInvoke(new Action(() => ShowAppointmentDetails(appointment)));
+            return;
+        }
+
+        _dockForm.ShowDockedFormOnTop();
+
+        if (_calendar != null)
+        {
+            _calendar.SelectedDate = appointment.StartTime.Date;
+        }
+
+        if (_taskManager != null)
+        {
+            _taskManager.FocusAppointment(appointment);
+        }
+    }
+
     private static void InitializeMetroComponents()
     {
         // カレンダー
@@ -6178,6 +7254,8 @@ public class DockableFormWithMetroUI
         _taskManager.TaskDeleted += TaskManager_TasksUpdated;
 
         UpdateResponsiveLayout();
+
+        ApplyThemeToComponents();
     }
 
     private static void TaskManager_LayoutMetricsChanged(object sender, EventArgs e)
