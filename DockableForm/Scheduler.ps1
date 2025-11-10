@@ -19,7 +19,6 @@ using System.Linq;
 using System.Threading;
 using System.IO;
 using System.Web.Script.Serialization;
-using MetroUI;
 
 #region DockableForm Classes
 // イージング関数を提供するクラス
