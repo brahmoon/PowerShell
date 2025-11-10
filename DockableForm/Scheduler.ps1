@@ -2805,6 +2805,7 @@ namespace MetroUI
         private Rectangle _nextTaskRect;
         private Rectangle _timelineRect;
         private Color _progressColor;
+        private bool _showTimeline = true;
         private bool _showSeconds = true;
         private Color[] _taskColors = new Color[3]; // 予定の色（近い予定、やや遠い予定、遠い予定）
         private Dictionary<int, Appointment> _timelineAppointments = new Dictionary<int, Appointment>();
@@ -2876,6 +2877,39 @@ namespace MetroUI
                     Invalidate();
                 }
             }
+        }
+
+        [System.ComponentModel.Browsable(true)]
+        [System.ComponentModel.Category("Metro Clock")]
+        [System.ComponentModel.Description("タイムラインを表示するかどうか")]
+        public bool ShowTimeline
+        {
+            get { return _showTimeline; }
+            set
+            {
+                if (_showTimeline != value)
+                {
+                    _showTimeline = value;
+                    if (!_showTimeline)
+                    {
+                        _showMarkerTooltip = false;
+                        _hoveredAppointment = null;
+                    }
+                    Invalidate();
+                }
+            }
+        }
+
+        [System.ComponentModel.Browsable(false)]
+        public int TimelineBottom
+        {
+            get { return _timelineRect.Bottom; }
+        }
+
+        [System.ComponentModel.Browsable(false)]
+        public int TimelineRequiredHeight
+        {
+            get { return _timelineRect.Bottom + 20; }
         }
 
         #endregion
@@ -3070,6 +3104,34 @@ namespace MetroUI
         
         private void MetroDigitalClock_MouseClick(object sender, MouseEventArgs e)
         {
+            if (!_showTimeline)
+                return;
+
+            float timelineCenterY = _timelineRect.Top + _timelineRect.Height / 2f;
+            Rectangle currentMarkerRect = new Rectangle(
+                _timelineRect.Left - 6,
+                (int)(timelineCenterY - 6),
+                12,
+                12);
+
+            if (currentMarkerRect.Contains(e.Location))
+            {
+                if (_calendar != null)
+                {
+                    DateTime today = DateTime.Today;
+
+                    if (_calendar.CurrentDate.Year != today.Year ||
+                        _calendar.CurrentDate.Month != today.Month)
+                    {
+                        _calendar.CurrentDate = new DateTime(today.Year, today.Month, 1);
+                    }
+
+                    _calendar.SelectedDate = today;
+                }
+
+                return;
+            }
+
             // タイムライン上のクリック位置をチェック
             foreach (var kvp in _timelineAppointments)
             {
@@ -3102,8 +3164,19 @@ namespace MetroUI
         // マウス移動イベントハンドラ - マーカーのホバー検出
         private void MetroDigitalClock_MouseMove(object sender, MouseEventArgs e)
         {
+            if (!_showTimeline)
+            {
+                if (_showMarkerTooltip)
+                {
+                    _showMarkerTooltip = false;
+                    _hoveredAppointment = null;
+                    this.Invalidate();
+                }
+                return;
+            }
+
             bool found = false;
-            
+
             // タイムライン上のマーカーにマウスが重なっているかチェック
             foreach (var kvp in _timelineAppointments)
             {
@@ -3195,7 +3268,14 @@ namespace MetroUI
             }
 
             // 直線タイムライン描画
-            DrawLinearTimeline(g);
+            if (_showTimeline)
+            {
+                DrawLinearTimeline(g);
+            }
+            else
+            {
+                _timelineAppointments.Clear();
+            }
 
             // 時刻描画
             string timeText = _showSeconds 
@@ -3492,8 +3572,11 @@ namespace MetroUI
         private bool _showMemoPage;
         private bool _isMemoCloseButtonHover;
         private TextBox _memoTextBox;
-        
+
         private System.Windows.Forms.Timer _titleScrollTimer;
+        private VScrollBar _taskScrollBar;
+        private bool _isUpdatingScrollBar;
+        private int _contentHeight;
 
         [System.ComponentModel.Browsable(true)]
         [System.ComponentModel.Category("Metro Task Manager")]
@@ -3588,7 +3671,15 @@ namespace MetroUI
             _dateHeaderLabel.Size = new Size(Width - 20, 30);
             _dateHeaderLabel.Location = new Point(10, 10);
             this.Controls.Add(_dateHeaderLabel);
-            
+
+            _taskScrollBar = new VScrollBar();
+            _taskScrollBar.Dock = DockStyle.Right;
+            _taskScrollBar.Width = 16;
+            _taskScrollBar.Visible = false;
+            _taskScrollBar.TabStop = false;
+            _taskScrollBar.Scroll += TaskScrollBar_Scroll;
+            this.Controls.Add(_taskScrollBar);
+
             CalculateRectangles();
 
             // マウスイベント登録
@@ -3727,9 +3818,16 @@ namespace MetroUI
             // _dateHeaderLabelがnullでないことを確認
             if (_dateHeaderLabel != null)
             {
-                _dateHeaderLabel.Size = new Size(Width - 20, 30);
+                int labelWidth = Width - 20;
+                if (_taskScrollBar != null && _taskScrollBar.Visible)
+                    labelWidth -= _taskScrollBar.Width;
+
+                if (labelWidth < 0)
+                    labelWidth = 0;
+
+                _dateHeaderLabel.Size = new Size(labelWidth, 30);
             }
-            
+
             UpdateTaskUIItems();
         }
 
@@ -3800,26 +3898,108 @@ namespace MetroUI
                 _taskUIItems = new List<TaskItemUI>();
             else
                 _taskUIItems.Clear();
-            
+
             // _dateHeaderLabelがnullの場合の対策
             int headerHeight = (_dateHeaderLabel != null) ? _dateHeaderLabel.Bottom + 10 : 50;
+            bool scrollVisible = _taskScrollBar != null && _taskScrollBar.Visible;
+            int rightMargin = scrollVisible ? _taskScrollBar.Width + 10 : 10;
+            int contentWidth = Math.Max(0, Width - 10 - rightMargin);
+
             int y = headerHeight - _scrollPosition;
-            
+
             if (_tasks != null)
             {
                 foreach (Appointment task in _tasks)
                 {
-                    Rectangle itemRect = new Rectangle(10, y, Width - 20, _itemHeight);
+                    Rectangle itemRect = new Rectangle(10, y, contentWidth, _itemHeight);
                     TaskItemUI taskItem = new TaskItemUI(task, itemRect);
-                    
-                    // リストの初期化は不要（コンストラクタでされている）
-                    
+
                     _taskUIItems.Add(taskItem);
                     y += _itemHeight + 5;
-                    
+
                     // サブタスクの矩形を更新
                     UpdateSubTaskRects(taskItem, ref y);
                 }
+            }
+
+            int contentBottom = Math.Max(headerHeight, y + _scrollPosition);
+            _contentHeight = contentBottom + 10;
+
+            int availableHeight = ClientSize.Height;
+            int maxScroll = Math.Max(0, _contentHeight - availableHeight);
+
+            if (_scrollPosition > maxScroll)
+            {
+                _scrollPosition = maxScroll;
+                if (_scrollPosition < 0)
+                    _scrollPosition = 0;
+                UpdateTaskUIItems();
+                return;
+            }
+
+            if (_taskScrollBar != null)
+            {
+                if (_contentHeight > availableHeight)
+                {
+                    if (!_taskScrollBar.Visible)
+                    {
+                        _taskScrollBar.Visible = true;
+                        UpdateTaskUIItems();
+                        return;
+                    }
+
+                    _isUpdatingScrollBar = true;
+                    _taskScrollBar.Minimum = 0;
+                    _taskScrollBar.Maximum = _contentHeight - 1;
+                    _taskScrollBar.LargeChange = availableHeight;
+                    _taskScrollBar.SmallChange = Math.Max(20, availableHeight / 10);
+                    int scrollValue = Math.Max(_taskScrollBar.Minimum,
+                        Math.Min(_scrollPosition, _taskScrollBar.Maximum - _taskScrollBar.LargeChange + 1));
+                    if (_taskScrollBar.Value != scrollValue)
+                    {
+                        _taskScrollBar.Value = scrollValue;
+                    }
+                    _isUpdatingScrollBar = false;
+                }
+                else
+                {
+                    if (_taskScrollBar.Visible)
+                    {
+                        _taskScrollBar.Visible = false;
+                        if (_scrollPosition != 0)
+                        {
+                            _scrollPosition = 0;
+                            UpdateTaskUIItems();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void SetScrollPosition(int newValue)
+        {
+            int maxScroll = Math.Max(0, _contentHeight - ClientSize.Height);
+            int clampedValue = Math.Max(0, Math.Min(newValue, maxScroll));
+
+            if (_scrollPosition != clampedValue)
+            {
+                _scrollPosition = clampedValue;
+
+                if (_taskScrollBar != null && _taskScrollBar.Visible)
+                {
+                    _isUpdatingScrollBar = true;
+                    int scrollValue = Math.Max(_taskScrollBar.Minimum,
+                        Math.Min(clampedValue, _taskScrollBar.Maximum - _taskScrollBar.LargeChange + 1));
+                    if (_taskScrollBar.Value != scrollValue)
+                    {
+                        _taskScrollBar.Value = scrollValue;
+                    }
+                    _isUpdatingScrollBar = false;
+                }
+
+                UpdateTaskUIItems();
+                Invalidate();
             }
         }
 
@@ -4403,10 +4583,18 @@ namespace MetroUI
             {
                 task.UpdateStatus();
             }
-            
+
             // UIも更新
             UpdateTaskUIItems();
             Invalidate();
+        }
+
+        private void TaskScrollBar_Scroll(object sender, ScrollEventArgs e)
+        {
+            if (_isUpdatingScrollBar)
+                return;
+
+            SetScrollPosition(e.NewValue);
         }
 
         private void MetroTaskManager_MouseMove(object sender, MouseEventArgs e)
@@ -4526,18 +4714,12 @@ namespace MetroUI
 
         private void MetroTaskManager_MouseWheel(object sender, MouseEventArgs e)
         {
-            // スクロール処理
-            int totalHeight = _dateHeaderLabel.Height + 10 + _tasks.Count * (_itemHeight + 5) + 10;
-            if (totalHeight > Height)
+            if (_contentHeight > Height)
             {
-                int newScrollPosition = _scrollPosition - (e.Delta / 120 * 20);
-                newScrollPosition = Math.Max(0, Math.Min(newScrollPosition, totalHeight - Height));
-
-                if (newScrollPosition != _scrollPosition)
+                int wheelStep = e.Delta / 120;
+                if (wheelStep != 0)
                 {
-                    _scrollPosition = newScrollPosition;
-                    UpdateTaskUIItems();
-                    Invalidate();
+                    SetScrollPosition(_scrollPosition - wheelStep * 20);
                 }
             }
         }
@@ -5778,6 +5960,18 @@ public class DockableFormWithMetroUI
     private static MetroUI.MetroTaskManager _taskManager;
     private static Panel _container;
     private static bool _isLoadingAppointments;
+    private static Panel _leftPanel;
+    private static Panel _rightPanel;
+    private static Panel _calendarContainer;
+    private static Panel _timelineContainer;
+    private static Button _showTasksButton;
+    private static Button _toggleTimelineButton;
+    private static bool _isCompactWidth;
+    private static bool _showingTaskPanelInCompact;
+    private static bool _isCompactHeight;
+    private static bool _showingTimelineInCompact;
+    private static AnimationEngine _horizontalAnimation;
+    private static AnimationEngine _verticalAnimation;
     
     // メインエントリーポイント
     [STAThread]
@@ -5821,24 +6015,72 @@ public class DockableFormWithMetroUI
     {
         // カレンダー
         _calendar = new MetroUI.MetroCalendar();
-        _calendar.Location = new Point(20, 20);
-        _calendar.Size = new Size(350, 300);
-        _container.Controls.Add(_calendar);
 
         // デジタル時計
         _clock = new MetroUI.MetroDigitalClock();
-        _clock.Location = new Point(20, 340);
-        _clock.Size = new Size(350, 220);
         _clock.Calendar = _calendar;
-        _container.Controls.Add(_clock);
 
         // タスク管理
         _taskManager = new MetroUI.MetroTaskManager();
-        _taskManager.Location = new Point(400, 20);
-        _taskManager.Size = new Size(360, 540);
-        _taskManager.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         _taskManager.Calendar = _calendar;
-        _container.Controls.Add(_taskManager);
+
+        // レイアウト用パネル
+        _leftPanel = new Panel();
+        _leftPanel.BackColor = Color.Transparent;
+
+        _rightPanel = new Panel();
+        _rightPanel.BackColor = Color.Transparent;
+
+        _calendarContainer = new Panel();
+        _calendarContainer.BackColor = Color.Transparent;
+        _calendar.Dock = DockStyle.Fill;
+        _calendarContainer.Controls.Add(_calendar);
+
+        _timelineContainer = new Panel();
+        _timelineContainer.BackColor = Color.Transparent;
+        _clock.Dock = DockStyle.Fill;
+        _timelineContainer.Controls.Add(_clock);
+
+        _leftPanel.Controls.Add(_timelineContainer);
+        _leftPanel.Controls.Add(_calendarContainer);
+
+        _taskManager.Dock = DockStyle.Fill;
+        _rightPanel.Controls.Add(_taskManager);
+
+        _container.Controls.Add(_leftPanel);
+        _container.Controls.Add(_rightPanel);
+
+        // トグルボタン
+        _showTasksButton = new Button();
+        _showTasksButton.Size = new Size(36, 36);
+        _showTasksButton.FlatStyle = FlatStyle.Flat;
+        _showTasksButton.FlatAppearance.BorderSize = 0;
+        _showTasksButton.BackColor = Color.FromArgb(220, 255, 255, 255);
+        _showTasksButton.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+        _showTasksButton.Text = "▶";
+        _showTasksButton.Visible = false;
+        _showTasksButton.Cursor = Cursors.Hand;
+        _showTasksButton.TabStop = false;
+        _showTasksButton.UseVisualStyleBackColor = false;
+        _showTasksButton.Click += ShowTasksButton_Click;
+        _container.Controls.Add(_showTasksButton);
+
+        _toggleTimelineButton = new Button();
+        _toggleTimelineButton.Size = new Size(36, 36);
+        _toggleTimelineButton.FlatStyle = FlatStyle.Flat;
+        _toggleTimelineButton.FlatAppearance.BorderSize = 0;
+        _toggleTimelineButton.BackColor = Color.FromArgb(220, 255, 255, 255);
+        _toggleTimelineButton.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+        _toggleTimelineButton.Text = "▼";
+        _toggleTimelineButton.Visible = false;
+        _toggleTimelineButton.Cursor = Cursors.Hand;
+        _toggleTimelineButton.TabStop = false;
+        _toggleTimelineButton.UseVisualStyleBackColor = false;
+        _toggleTimelineButton.Click += ToggleTimelineButton_Click;
+        _container.Controls.Add(_toggleTimelineButton);
+
+        _container.Resize += Container_Resize;
+        _dockForm.SizeChanged += DockForm_SizeChanged;
 
         _calendar.AppointmentAdded += Calendar_AppointmentsUpdated;
         _calendar.AppointmentChanged += Calendar_AppointmentsUpdated;
@@ -5846,6 +6088,8 @@ public class DockableFormWithMetroUI
         _taskManager.TaskAdded += TaskManager_TasksUpdated;
         _taskManager.TaskChanged += TaskManager_TasksUpdated;
         _taskManager.TaskDeleted += TaskManager_TasksUpdated;
+
+        UpdateResponsiveLayout();
     }
 
     private static void LoadAppointmentsFromStorage()
@@ -5893,6 +6137,346 @@ public class DockableFormWithMetroUI
         if (_calendar != null)
         {
             ScheduleStorage.SaveAppointments(_calendar.Appointments);
+        }
+    }
+
+    private static void Container_Resize(object sender, EventArgs e)
+    {
+        UpdateResponsiveLayout();
+    }
+
+    private static void DockForm_SizeChanged(object sender, EventArgs e)
+    {
+        UpdateResponsiveLayout();
+    }
+
+    private static void ShowTasksButton_Click(object sender, EventArgs e)
+    {
+        if (!_isCompactWidth || _leftPanel == null || _rightPanel == null)
+            return;
+
+        if (_horizontalAnimation != null && _horizontalAnimation.IsRunning)
+            return;
+
+        bool showTasks = !_showingTaskPanelInCompact;
+        Panel incoming = showTasks ? _rightPanel : _leftPanel;
+        Panel outgoing = showTasks ? _leftPanel : _rightPanel;
+
+        Rectangle targetBounds = _leftPanel.Bounds;
+        incoming.Visible = true;
+        incoming.Bounds = new Rectangle(
+            showTasks ? _container.ClientSize.Width : -targetBounds.Width,
+            targetBounds.Y,
+            targetBounds.Width,
+            targetBounds.Height);
+        outgoing.Bounds = targetBounds;
+
+        int startIncomingX = incoming.Left;
+        int endIncomingX = targetBounds.Left;
+        int startOutgoingX = outgoing.Left;
+        int endOutgoingX = showTasks ? -targetBounds.Width : _container.ClientSize.Width;
+
+        _showTasksButton.Enabled = false;
+
+        _horizontalAnimation = new AnimationEngine(300, 60, EasingFunctions.EasingType.EaseOutCubic);
+        _horizontalAnimation.Start(
+            progress =>
+            {
+                int newOutgoingX = startOutgoingX + (int)((endOutgoingX - startOutgoingX) * progress);
+                int newIncomingX = startIncomingX + (int)((endIncomingX - startIncomingX) * progress);
+                outgoing.Left = newOutgoingX;
+                incoming.Left = newIncomingX;
+            },
+            () =>
+            {
+                outgoing.Visible = false;
+                incoming.Left = endIncomingX;
+                _showingTaskPanelInCompact = showTasks;
+                _showTasksButton.Enabled = true;
+                _horizontalAnimation = null;
+                UpdateResponsiveLayout();
+            });
+    }
+
+    private static void ToggleTimelineButton_Click(object sender, EventArgs e)
+    {
+        if (!_isCompactHeight)
+            return;
+
+        if (_isCompactWidth && _showingTaskPanelInCompact)
+            return;
+
+        if (_verticalAnimation != null && _verticalAnimation.IsRunning)
+            return;
+
+        bool showTimeline = !_showingTimelineInCompact;
+        Panel incoming = showTimeline ? _timelineContainer : _calendarContainer;
+        Panel outgoing = showTimeline ? _calendarContainer : _timelineContainer;
+
+        if (incoming == null || outgoing == null)
+            return;
+
+        Rectangle targetBounds = new Rectangle(0, 0, _leftPanel.Width, _leftPanel.Height);
+        incoming.Visible = true;
+        incoming.Bounds = new Rectangle(
+            targetBounds.X,
+            showTimeline ? _leftPanel.Height : -targetBounds.Height,
+            targetBounds.Width,
+            targetBounds.Height);
+        outgoing.Bounds = targetBounds;
+
+        int startIncomingY = incoming.Top;
+        int endIncomingY = targetBounds.Y;
+        int startOutgoingY = outgoing.Top;
+        int endOutgoingY = showTimeline ? -targetBounds.Height : _leftPanel.Height;
+
+        if (showTimeline && _clock != null)
+            _clock.Visible = true;
+
+        _toggleTimelineButton.Enabled = false;
+
+        _verticalAnimation = new AnimationEngine(300, 60, EasingFunctions.EasingType.EaseOutCubic);
+        _verticalAnimation.Start(
+            progress =>
+            {
+                int newOutgoingY = startOutgoingY + (int)((endOutgoingY - startOutgoingY) * progress);
+                int newIncomingY = startIncomingY + (int)((endIncomingY - startIncomingY) * progress);
+                outgoing.Top = newOutgoingY;
+                incoming.Top = newIncomingY;
+            },
+            () =>
+            {
+                outgoing.Visible = false;
+                incoming.Bounds = targetBounds;
+                _showingTimelineInCompact = showTimeline;
+                _toggleTimelineButton.Enabled = true;
+                _verticalAnimation = null;
+                UpdateResponsiveLayout();
+            });
+    }
+
+    private static void UpdateResponsiveLayout()
+    {
+        if (_container == null || _leftPanel == null || _rightPanel == null)
+            return;
+
+        if (_horizontalAnimation != null && _horizontalAnimation.IsRunning)
+        {
+            _horizontalAnimation.Stop();
+            _horizontalAnimation = null;
+        }
+
+        if (_verticalAnimation != null && _verticalAnimation.IsRunning)
+        {
+            _verticalAnimation.Stop();
+            _verticalAnimation = null;
+        }
+
+        if (_showTasksButton != null)
+            _showTasksButton.Enabled = true;
+        if (_toggleTimelineButton != null)
+            _toggleTimelineButton.Enabled = true;
+
+        int margin = 20;
+        int spacing = 20;
+        int width = _container.ClientSize.Width;
+        int height = _container.ClientSize.Height;
+
+        if (width <= 0 || height <= 0)
+            return;
+
+        int leftPreferredWidth = Math.Max(_calendar.Width, _clock.Width);
+        if (leftPreferredWidth <= 0)
+            leftPreferredWidth = 340;
+
+        int requiredWidthForTasks = leftPreferredWidth + _taskManager.MinimumSize.Width + spacing + margin * 2;
+        bool compactWidth = width < requiredWidthForTasks;
+
+        int availableHeight = height - margin * 2;
+        int timelineRequiredHeight = _clock.TimelineRequiredHeight;
+        if (timelineRequiredHeight <= 0)
+            timelineRequiredHeight = 150;
+        int requiredHeightForTimeline = _calendar.Height + spacing + timelineRequiredHeight;
+        bool compactHeight = availableHeight < requiredHeightForTimeline;
+
+        _isCompactWidth = compactWidth;
+        _isCompactHeight = compactHeight;
+
+        if (!compactWidth)
+        {
+            _leftPanel.Visible = true;
+            _rightPanel.Visible = true;
+            _showTasksButton.Visible = false;
+
+            int leftWidth = leftPreferredWidth;
+            int rightWidth = width - margin * 2 - leftWidth - spacing;
+
+            if (rightWidth < _taskManager.MinimumSize.Width)
+            {
+                rightWidth = _taskManager.MinimumSize.Width;
+                leftWidth = width - margin * 2 - rightWidth - spacing;
+            }
+
+            if (leftWidth < 280)
+                leftWidth = Math.Max(280, width - margin * 2 - _taskManager.MinimumSize.Width - spacing);
+
+            if (leftWidth < 200)
+                leftWidth = 200;
+
+            if (rightWidth < _taskManager.MinimumSize.Width)
+                rightWidth = _taskManager.MinimumSize.Width;
+
+            int panelHeight = Math.Max(0, availableHeight);
+            if (panelHeight < 200)
+                panelHeight = Math.Max(0, height - margin * 2);
+            if (panelHeight <= 0)
+                panelHeight = Math.Max(0, height - margin);
+
+            _leftPanel.Bounds = new Rectangle(margin, margin, leftWidth, panelHeight);
+            _rightPanel.Bounds = new Rectangle(_leftPanel.Right + spacing, margin,
+                Math.Max(200, rightWidth), panelHeight);
+
+            if (_showingTaskPanelInCompact)
+                _showingTaskPanelInCompact = false;
+        }
+        else
+        {
+            int panelWidth = Math.Max(0, width - margin * 2);
+            int panelHeight = Math.Max(0, availableHeight);
+            if (panelHeight <= 0)
+                panelHeight = Math.Max(0, height - margin);
+
+            _leftPanel.Bounds = new Rectangle(margin, margin, panelWidth, panelHeight);
+            _rightPanel.Bounds = new Rectangle(margin, margin, panelWidth, panelHeight);
+
+            _leftPanel.Visible = !_showingTaskPanelInCompact;
+            _rightPanel.Visible = _showingTaskPanelInCompact;
+
+            _showTasksButton.Visible = true;
+            _showTasksButton.Text = _showingTaskPanelInCompact ? "◀" : "▶";
+
+            int buttonX = width - _showTasksButton.Width - 10;
+            if (buttonX < 10)
+                buttonX = width - _showTasksButton.Width;
+            int buttonY = margin + (panelHeight / 2) - (_showTasksButton.Height / 2);
+            if (buttonY < margin)
+                buttonY = margin;
+            if (buttonY + _showTasksButton.Height > height - margin)
+                buttonY = height - margin - _showTasksButton.Height;
+
+            _showTasksButton.Location = new Point(buttonX, buttonY);
+        }
+
+        UpdateLeftPanelVerticalLayout(compactHeight);
+
+        if (_isCompactWidth && _showingTaskPanelInCompact)
+        {
+            if (_toggleTimelineButton != null)
+                _toggleTimelineButton.Visible = false;
+        }
+
+        if (_showTasksButton != null)
+            _showTasksButton.BringToFront();
+        if (_toggleTimelineButton != null)
+            _toggleTimelineButton.BringToFront();
+    }
+
+    private static void UpdateLeftPanelVerticalLayout(bool compactHeight)
+    {
+        if (_leftPanel == null || _calendarContainer == null || _timelineContainer == null)
+            return;
+
+        int spacing = 20;
+        int panelHeight = _leftPanel.Height;
+
+        if (_isCompactWidth && _showingTaskPanelInCompact)
+        {
+            _calendarContainer.Visible = false;
+            _timelineContainer.Visible = false;
+            if (_clock != null)
+            {
+                _clock.Visible = false;
+                _clock.ShowTimeline = true;
+            }
+            if (_toggleTimelineButton != null)
+                _toggleTimelineButton.Visible = false;
+            return;
+        }
+
+        if (!compactHeight)
+        {
+            _showingTimelineInCompact = false;
+            _calendarContainer.Visible = true;
+            _timelineContainer.Visible = true;
+
+            int minClockHeight = Math.Max(_clock.TimelineRequiredHeight, 150);
+            int calendarHeight = _calendar.Height;
+            if (panelHeight < calendarHeight + spacing + minClockHeight)
+            {
+                calendarHeight = Math.Max(200, panelHeight - spacing - minClockHeight);
+            }
+
+            if (calendarHeight < 200)
+                calendarHeight = Math.Max(200, panelHeight / 2);
+
+            int timelineHeight = Math.Max(minClockHeight, panelHeight - calendarHeight - spacing);
+
+            _calendarContainer.Bounds = new Rectangle(0, 0, _leftPanel.Width, Math.Max(100, calendarHeight));
+            _timelineContainer.Bounds = new Rectangle(0, _calendarContainer.Bottom + spacing, _leftPanel.Width, timelineHeight);
+
+            if (_timelineContainer.Bottom > _leftPanel.Height)
+            {
+                int overflow = _timelineContainer.Bottom - _leftPanel.Height;
+                _timelineContainer.Height = Math.Max(minClockHeight, _timelineContainer.Height - overflow);
+            }
+
+            if (_clock != null)
+            {
+                _clock.ShowTimeline = true;
+                _clock.Visible = true;
+            }
+
+            if (_toggleTimelineButton != null)
+                _toggleTimelineButton.Visible = false;
+        }
+        else
+        {
+            if (_toggleTimelineButton != null)
+            {
+                _toggleTimelineButton.Visible = true;
+                _toggleTimelineButton.Text = _showingTimelineInCompact ? "▲" : "▼";
+                int buttonX = _leftPanel.Left + (_leftPanel.Width - _toggleTimelineButton.Width) / 2;
+                if (buttonX < 10)
+                    buttonX = 10;
+                int buttonY = _leftPanel.Bottom + 10;
+                if (buttonY + _toggleTimelineButton.Height > _container.ClientSize.Height - 10)
+                    buttonY = _container.ClientSize.Height - _toggleTimelineButton.Height - 10;
+                _toggleTimelineButton.Location = new Point(buttonX, buttonY);
+            }
+
+            if (_clock != null)
+            {
+                _clock.ShowTimeline = _showingTimelineInCompact;
+                if (!_showingTimelineInCompact)
+                    _clock.Visible = false;
+            }
+
+            if (_showingTimelineInCompact)
+            {
+                _calendarContainer.Visible = false;
+                _timelineContainer.Visible = true;
+                _timelineContainer.Bounds = new Rectangle(0, 0, _leftPanel.Width, _leftPanel.Height);
+                if (_clock != null)
+                    _clock.Visible = true;
+            }
+            else
+            {
+                _calendarContainer.Visible = true;
+                _calendarContainer.Bounds = new Rectangle(0, 0, _leftPanel.Width, _leftPanel.Height);
+                _timelineContainer.Visible = false;
+                if (_clock != null)
+                    _clock.Visible = false;
+            }
         }
     }
 }
