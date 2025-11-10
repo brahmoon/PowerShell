@@ -297,7 +297,7 @@ public class AnimatedDockableForm : Form
     private bool _isResizing = false;
     private bool _isManuallyUndocked = false;
     private bool _isLocationAnimating = false;
-    private const int DockDetachThreshold = 10;
+    private const int DockDetachThreshold = 30;
 
     
     // リサイズ方向の列挙型
