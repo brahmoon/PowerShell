@@ -254,6 +254,37 @@ public class AnimatedDockableForm : Form
     public static extern int SendMessage(IntPtr hWnd, Int32 wMsg, bool wParam, Int32 lParam);
     private const int WM_SETREDRAW = 11;
 
+    // キーボードフック用のWin32 API 定義
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_KEYUP = 0x0101;
+    private const int WM_SYSKEYDOWN = 0x0104;
+    private const int WM_SYSKEYUP = 0x0105;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KBDLLHOOKSTRUCT
+    {
+        public int vkCode;
+        public int scanCode;
+        public int flags;
+        public int time;
+        public IntPtr dwExtraInfo;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT
     {
@@ -300,9 +331,17 @@ public class AnimatedDockableForm : Form
     private bool _isLocationAnimating = false;
     private bool _autoShowSuppressed = false;
     private bool _isFullScreenDragRestoreInProgress = false;
+    private Point _latestFullScreenRestoreCursor;
     private const int DockDetachThreshold = 30;
+    private IntPtr _keyboardHookHandle = IntPtr.Zero;
+    private LowLevelKeyboardProc _keyboardHookCallback;
+    private const int FnActivationVirtualKey = 0xFF;
+    private const int FnDoublePressThresholdMilliseconds = 350;
+    private long _lastFnKeyDownTimestamp = 0;
+    private readonly long _fnDoublePressThresholdTicks = (Stopwatch.Frequency * FnDoublePressThresholdMilliseconds) / 1000;
+    private bool _fnKeyDownActive = false;
 
-    
+
     // リサイズ方向の列挙型
     private enum ResizeDirection
     {
@@ -475,7 +514,8 @@ public class AnimatedDockableForm : Form
         InitializeResizeCapability();
         SetupMouseTracking();
         SetupTrayIcon();
-        
+        SetupKeyboardHook();
+
         // アニメーションエンジンを最適化して初期化
         _animationEngine = new AnimationEngine(_animationDuration, 30, EasingFunctions.EasingType.EaseOutCubic);
         
@@ -1071,7 +1111,7 @@ public class AnimatedDockableForm : Form
         if (_isFullScreen)
             return;
 
-        if (!_isManuallyUndocked)
+        if (!_allowTopResize)
             return;
 
         _currentResizeDirection = direction;
@@ -1097,7 +1137,7 @@ public class AnimatedDockableForm : Form
         if (_topResizeHandle == null || _topLeftResizeHandle == null || _topRightResizeHandle == null)
             return;
 
-        bool showHandles = _isManuallyUndocked && !_isFullScreen && _allowTopResize;
+        bool showHandles = !_isFullScreen && _allowTopResize;
 
         int handleHeight = RESIZE_BORDER_SIZE;
         int cornerWidth = RESIZE_BORDER_SIZE * 2;
@@ -1360,9 +1400,9 @@ public class AnimatedDockableForm : Form
         bool onRightEdge = mousePosition.X >= clientWidth - RESIZE_BORDER_SIZE;
         bool onBottomEdge = mousePosition.Y >= clientHeight - RESIZE_BORDER_SIZE;
         bool onTopEdge = mousePosition.Y <= RESIZE_BORDER_SIZE && _allowTopResize;
-        
-        // ヘッダーパネル内の場合はリサイズ無効（ドラッグ移動用）
-        if (mousePosition.Y <= _headerPanel.Height)
+        bool withinHeader = _headerPanel != null && mousePosition.Y <= _headerPanel.Height;
+
+        if (withinHeader && !onTopEdge)
             return ResizeDirection.None;
         
         if (onTopEdge && onLeftEdge)
@@ -1391,12 +1431,6 @@ public class AnimatedDockableForm : Form
         // ドラッグ中やリサイズ中は何もしない
         if (_isDragging || _isResizing)
             return;
-
-        if (_dockPosition == DockPosition.Top && !_isManuallyUndocked)
-        {
-            this.Cursor = Cursors.Default;
-            return;
-        }
 
         Control control = sender as Control;
         if (control == null) return;
@@ -1640,6 +1674,99 @@ public class AnimatedDockableForm : Form
         
         _notifyIcon.ContextMenuStrip = menu;
         _notifyIcon.DoubleClick += new EventHandler(NotifyIcon_DoubleClick);
+    }
+
+    private void SetupKeyboardHook()
+    {
+        if (_keyboardHookHandle != IntPtr.Zero)
+            return;
+
+        _keyboardHookCallback = new LowLevelKeyboardProc(KeyboardHookProcedure);
+
+        IntPtr moduleHandle = GetModuleHandle(null);
+
+        if (moduleHandle == IntPtr.Zero)
+        {
+            Process currentProcess = Process.GetCurrentProcess();
+            try
+            {
+                ProcessModule mainModule = currentProcess.MainModule;
+                if (mainModule != null)
+                {
+                    moduleHandle = GetModuleHandle(mainModule.ModuleName);
+                }
+            }
+            finally
+            {
+                currentProcess.Dispose();
+            }
+        }
+
+        _keyboardHookHandle = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardHookCallback, moduleHandle, 0);
+
+        if (_keyboardHookHandle == IntPtr.Zero)
+        {
+            int error = Marshal.GetLastWin32Error();
+            Debug.WriteLine("Failed to install keyboard hook: " + error);
+        }
+    }
+
+    private void RemoveKeyboardHook()
+    {
+        if (_keyboardHookHandle != IntPtr.Zero)
+        {
+            UnhookWindowsHookEx(_keyboardHookHandle);
+            _keyboardHookHandle = IntPtr.Zero;
+            _keyboardHookCallback = null;
+        }
+
+        _lastFnKeyDownTimestamp = 0;
+        _fnKeyDownActive = false;
+    }
+
+    private IntPtr KeyboardHookProcedure(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && lParam != IntPtr.Zero)
+        {
+            KBDLLHOOKSTRUCT info = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+            int message = wParam.ToInt32();
+
+            if (info.vkCode == FnActivationVirtualKey)
+            {
+                if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
+                {
+                    if (!_fnKeyDownActive)
+                    {
+                        long timestamp = Stopwatch.GetTimestamp();
+
+                        if (_lastFnKeyDownTimestamp != 0 && timestamp - _lastFnKeyDownTimestamp <= _fnDoublePressThresholdTicks)
+                        {
+                            _lastFnKeyDownTimestamp = 0;
+
+                            if (!this.IsDisposed && this.IsHandleCreated)
+                            {
+                                this.BeginInvoke(new Action(delegate()
+                                {
+                                    ShowDockedFormOnTop();
+                                }));
+                            }
+                        }
+                        else
+                        {
+                            _lastFnKeyDownTimestamp = timestamp;
+                        }
+                    }
+
+                    _fnKeyDownActive = true;
+                }
+                else if (message == WM_KEYUP || message == WM_SYSKEYUP)
+                {
+                    _fnKeyDownActive = false;
+                }
+            }
+        }
+
+        return CallNextHookEx(_keyboardHookHandle, nCode, wParam, lParam);
     }
 
     public void ShowDockedFormOnTop(bool ensureOpenAnimation = true)
@@ -2091,6 +2218,12 @@ public class AnimatedDockableForm : Form
                 return;
             }
 
+            if (_isFullScreenDragRestoreInProgress)
+            {
+                _latestFullScreenRestoreCursor = Cursor.Position;
+                return;
+            }
+
             if (_isFullScreenDragRestoreInProgress || _isLocationAnimating)
                 return;
 
@@ -2198,39 +2331,48 @@ public class AnimatedDockableForm : Form
         _shouldHideWhenAnimationComplete = false;
 
         Rectangle startBounds = this.Bounds;
-        Size targetSize = _dockSize.Width > 0 && _dockSize.Height > 0
+        Size restoreSize = _dockSize.Width > 0 && _dockSize.Height > 0
             ? _dockSize
             : new Size(Math.Max(this.MinimumSize.Width, _originalWidth), Math.Max(this.MinimumSize.Height, _originalHeight));
 
-        if (targetSize.Width <= 0 || targetSize.Height <= 0)
+        if (restoreSize.Width <= 0 || restoreSize.Height <= 0)
         {
-            targetSize = new Size(Math.Max(this.MinimumSize.Width, 900), Math.Max(this.MinimumSize.Height, 620));
+            restoreSize = new Size(Math.Max(this.MinimumSize.Width, 900), Math.Max(this.MinimumSize.Height, 620));
         }
 
         Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
         Point cursorScreen = Cursor.Position;
+        _latestFullScreenRestoreCursor = cursorScreen;
 
         float xRatio = startBounds.Width > 0 ? (float)_dragStartFormPoint.X / startBounds.Width : 0.5f;
         float yRatio = startBounds.Height > 0 ? (float)_dragStartFormPoint.Y / startBounds.Height : 0.0f;
 
-        int targetX = cursorScreen.X - (int)Math.Round(targetSize.Width * xRatio);
-        int targetY = cursorScreen.Y - (int)Math.Round(targetSize.Height * yRatio);
-
-        targetX = Math.Max(workingArea.Left, Math.Min(targetX, workingArea.Right - targetSize.Width));
-        targetY = Math.Max(workingArea.Top, Math.Min(targetY, workingArea.Bottom - targetSize.Height));
-
-        Rectangle targetBounds = new Rectangle(targetX, targetY, targetSize.Width, targetSize.Height);
-
-        Action completeRestore = () =>
+        Func<Point, Size, Rectangle> computeBoundsForCursor = (anchorCursor, size) =>
         {
-            this.Bounds = targetBounds;
-            _originalWidth = targetBounds.Width;
-            _originalHeight = targetBounds.Height;
-            _dockSize = targetBounds.Size;
-            _dockLocation = targetBounds.Location;
-            _formLeftPosition = targetBounds.X;
-            _triggerX = targetBounds.X;
-            _triggerY = targetBounds.Y;
+            int width = Math.Max(1, size.Width);
+            int height = Math.Max(1, size.Height);
+
+            int x = anchorCursor.X - (int)Math.Round(width * xRatio);
+            int y = anchorCursor.Y - (int)Math.Round(height * yRatio);
+
+            x = Math.Max(workingArea.Left, Math.Min(x, workingArea.Right - width));
+            y = Math.Max(workingArea.Top, Math.Min(y, workingArea.Bottom - height));
+
+            return new Rectangle(x, y, width, height);
+        };
+
+        Rectangle desiredBounds = computeBoundsForCursor(cursorScreen, restoreSize);
+
+        Action<Rectangle> completeRestore = finalBounds =>
+        {
+            this.Bounds = finalBounds;
+            _originalWidth = finalBounds.Width;
+            _originalHeight = finalBounds.Height;
+            _dockSize = finalBounds.Size;
+            _dockLocation = finalBounds.Location;
+            _formLeftPosition = finalBounds.X;
+            _triggerX = finalBounds.X;
+            _triggerY = finalBounds.Y;
             UpdateTriggerArea();
 
             _statusLabel.Text = "フルスクリーンドラッグを解除しました";
@@ -2253,32 +2395,52 @@ public class AnimatedDockableForm : Form
 
         _isFullScreenDragRestoreInProgress = true;
 
-        if (startBounds == targetBounds)
+        if (startBounds == desiredBounds)
         {
-            completeRestore();
+            Rectangle finalBounds = computeBoundsForCursor(_latestFullScreenRestoreCursor, restoreSize);
+            completeRestore(finalBounds);
             return;
         }
 
         _animationEngine.Start(
             progress =>
             {
-                int width = startBounds.Width + (int)((targetBounds.Width - startBounds.Width) * progress);
-                int height = startBounds.Height + (int)((targetBounds.Height - startBounds.Height) * progress);
-                int x = startBounds.X + (int)((targetBounds.X - startBounds.X) * progress);
-                int y = startBounds.Y + (int)((targetBounds.Y - startBounds.Y) * progress);
-                this.Bounds = new Rectangle(x, y, width, height);
+                int width = startBounds.Width + (int)((restoreSize.Width - startBounds.Width) * progress);
+                int height = startBounds.Height + (int)((restoreSize.Height - startBounds.Height) * progress);
+
+                Size animatedSize = new Size(width, height);
+                Rectangle nextBounds = computeBoundsForCursor(_latestFullScreenRestoreCursor, animatedSize);
+                this.Bounds = nextBounds;
             },
             () =>
             {
-                completeRestore();
+                Rectangle finalBounds = computeBoundsForCursor(_latestFullScreenRestoreCursor, restoreSize);
+                completeRestore(finalBounds);
             });
     }
 
     private void SetManualUndockState(bool isUndocked)
     {
         _isManuallyUndocked = isUndocked;
-        AllowTopResize = isUndocked;
-        UpdateTopResizeHandles();
+        bool shouldAllowTopResize = isUndocked || _dockPosition == DockPosition.Top;
+        AllowTopResize = shouldAllowTopResize;
+
+        if (!isUndocked)
+        {
+            _autoShowSuppressed = false;
+
+            if (_hideDelayTimer != null && _hideDelayTimer.Enabled)
+            {
+                _hideDelayTimer.Stop();
+            }
+            if (_showDelayTimer != null && _showDelayTimer.Enabled)
+            {
+                _showDelayTimer.Stop();
+            }
+
+            _mouseLeavePending = false;
+            _showDelayPending = false;
+        }
     }
 
     private void DetachFromTopDock(Point currentScreenPoint, int verticalDelta)
@@ -2326,7 +2488,9 @@ public class AnimatedDockableForm : Form
         _dockPosition = DockPosition.Top;
         SetManualUndockState(false);
         _triggerX = clampedX;
+        _triggerY = 0;
         _formLeftPosition = clampedX;
+        _triggerWidth = this.Width;
         UpdateTriggerArea();
         _dockLocation = this.Location;
 
@@ -2342,6 +2506,8 @@ public class AnimatedDockableForm : Form
     {
         if (disposing)
         {
+            RemoveKeyboardHook();
+
             if (_mouseTrackTimer != null)
             {
                 _mouseTrackTimer.Dispose();
