@@ -973,7 +973,6 @@ public class AnimatedDockableForm : Form
         button.Size = new Size(24, 24);
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 0;
-        button.FlatAppearance.BorderColor = Color.Transparent;
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, Color.Black);
         button.FlatAppearance.MouseDownBackColor = Color.FromArgb(80, Color.Black);
         button.Text = text;
@@ -2099,7 +2098,7 @@ public class AnimatedDockableForm : Form
                 return;
             }
 
-            if (_isLocationAnimating)
+            if (_isFullScreenDragRestoreInProgress || _isLocationAnimating)
                 return;
 
             Point newLocation = this.Location;
@@ -7939,3 +7938,4 @@ Add-Type -TypeDefinition $csCode -ReferencedAssemblies System.Windows.Forms, Sys
 
 # 統合されたアプリケーションを起動
 [DockableFormWithMetroUI]::Main()
+F
