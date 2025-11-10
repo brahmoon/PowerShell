@@ -6070,7 +6070,7 @@ public class DockableFormWithMetroUI
             // DockableFormの作成
             _dockForm = new AnimatedDockableForm();
             _dockForm.Text = "MetroUI Dashboard";
-            _dockForm.Size = new Size(900, 600);
+            _dockForm.Size = new Size(900, 620);
             
             // コンテンツパネルの設定
             _container = new Panel();
