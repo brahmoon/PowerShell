@@ -3858,7 +3858,7 @@ namespace MetroUI
             int addButtonSize = 48;
             int addButtonMargin = 16;
             int addButtonX = ClientSize.Width - addButtonSize - addButtonMargin;
-            int addButtonY = ClientSize.Height - addButtonSize - addButtonMargin - 25;
+            int addButtonY = ClientSize.Height - addButtonSize - addButtonMargin - 5;
 
             if (addButtonX < addButtonMargin)
                 addButtonX = addButtonMargin;
