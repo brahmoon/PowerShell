@@ -299,6 +299,7 @@ public class AnimatedDockableForm : Form
     private bool _isManuallyUndocked = false;
     private bool _isLocationAnimating = false;
     private bool _autoShowSuppressed = false;
+    private bool _isFullScreenDragRestoreInProgress = false;
     private const int DockDetachThreshold = 30;
 
     
@@ -971,10 +972,15 @@ public class AnimatedDockableForm : Form
         button.Size = new Size(24, 24);
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.BorderColor = Color.Transparent;
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, Color.Black);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(80, Color.Black);
         button.Text = text;
         button.Cursor = Cursors.Hand;
         button.BackColor = Color.Transparent;
         button.ForeColor = Color.White;
+        button.UseVisualStyleBackColor = false;
+        button.TabStop = false;
 
         if (clickHandler != null)
         {
@@ -1006,8 +1012,16 @@ public class AnimatedDockableForm : Form
         panel.TabStop = false;
         panel.MouseMove += Form_MouseMove;
         panel.MouseUp += Form_MouseUp;
-        this.Controls.Add(panel);
-        panel.BringToFront();
+        if (_headerPanel != null)
+        {
+            _headerPanel.Controls.Add(panel);
+            panel.BringToFront();
+        }
+        else
+        {
+            this.Controls.Add(panel);
+            panel.BringToFront();
+        }
         return panel;
     }
 
@@ -1088,23 +1102,61 @@ public class AnimatedDockableForm : Form
 
         int handleHeight = RESIZE_BORDER_SIZE;
         int cornerWidth = RESIZE_BORDER_SIZE * 2;
-        int centerWidth = this.Width - (cornerWidth * 2);
-        if (centerWidth < 0)
-            centerWidth = 0;
+        Control parentControl = _headerPanel != null ? (Control)_headerPanel : this;
+        int parentWidth = parentControl.Width;
 
-        _topResizeHandle.Visible = showHandles;
-        _topLeftResizeHandle.Visible = showHandles;
-        _topRightResizeHandle.Visible = showHandles;
+        _topLeftResizeHandle.Visible = showHandles && cornerWidth > 0;
+        _topResizeHandle.Visible = false;
+        _topRightResizeHandle.Visible = false;
 
-        if (showHandles)
+        if (!showHandles)
         {
-            _topLeftResizeHandle.Bounds = new Rectangle(0, 0, cornerWidth, handleHeight);
-            _topRightResizeHandle.Bounds = new Rectangle(Math.Max(0, this.Width - cornerWidth), 0, cornerWidth, handleHeight);
-            _topResizeHandle.Bounds = new Rectangle(cornerWidth, 0, centerWidth, handleHeight);
+            return;
+        }
 
-            _topLeftResizeHandle.BringToFront();
-            _topRightResizeHandle.BringToFront();
+        int buttonPanelLeft = parentWidth;
+        if (_buttonPanel != null && _buttonPanel.Parent != null)
+        {
+            Point buttonScreen = _buttonPanel.PointToScreen(Point.Empty);
+            Point buttonClient = parentControl.PointToClient(buttonScreen);
+            buttonPanelLeft = Math.Max(0, buttonClient.X);
+        }
+
+        int exclusionMargin = 6;
+        int centerEnd = Math.Min(parentWidth - cornerWidth, buttonPanelLeft - exclusionMargin);
+        centerEnd = Math.Max(centerEnd, cornerWidth);
+        int centerWidth = Math.Max(0, centerEnd - cornerWidth);
+
+        _topLeftResizeHandle.Bounds = new Rectangle(0, 0, cornerWidth, handleHeight);
+        _topLeftResizeHandle.BringToFront();
+
+        if (centerWidth > 0)
+        {
+            _topResizeHandle.Visible = true;
+            _topResizeHandle.Bounds = new Rectangle(cornerWidth, 0, centerWidth, handleHeight);
             _topResizeHandle.BringToFront();
+        }
+
+        bool showRightHandle = buttonPanelLeft >= parentWidth;
+        if (showRightHandle)
+        {
+            int rightHandleLeft = Math.Max(centerEnd, parentWidth - cornerWidth);
+            int rightHandleWidth = Math.Max(0, parentWidth - rightHandleLeft);
+            if (rightHandleWidth > 0)
+            {
+                _topRightResizeHandle.Visible = true;
+                _topRightResizeHandle.Bounds = new Rectangle(rightHandleLeft, 0, rightHandleWidth, handleHeight);
+                _topRightResizeHandle.BringToFront();
+            }
+        }
+        else
+        {
+            _topRightResizeHandle.Visible = false;
+        }
+
+        if (_buttonPanel != null)
+        {
+            _buttonPanel.BringToFront();
         }
     }
 
@@ -1340,7 +1392,13 @@ public class AnimatedDockableForm : Form
         // ドラッグ中やリサイズ中は何もしない
         if (_isDragging || _isResizing)
             return;
-            
+
+        if (_dockPosition == DockPosition.Top && !_isManuallyUndocked)
+        {
+            this.Cursor = Cursors.Default;
+            return;
+        }
+
         Control control = sender as Control;
         if (control == null) return;
         
@@ -2028,11 +2086,13 @@ public class AnimatedDockableForm : Form
         }
         else if (_isDragging)
         {
-            // フルスクリーンモード時はドラッグ無効
             if (_isFullScreen)
+            {
+                BeginFullScreenDragRestore();
                 return;
+            }
 
-            if (_isLocationAnimating)
+            if (_isFullScreenDragRestoreInProgress || _isLocationAnimating)
                 return;
 
             Point newLocation = this.Location;
@@ -2127,6 +2187,92 @@ public class AnimatedDockableForm : Form
         }
         
         _isDragging = false;
+    }
+
+    private void BeginFullScreenDragRestore()
+    {
+        if (!_isFullScreen || _isFullScreenDragRestoreInProgress)
+            return;
+
+        StopAnimationAndResumeLayoutIfNeeded();
+        _isClosingAnimation = false;
+        _shouldHideWhenAnimationComplete = false;
+
+        Rectangle startBounds = this.Bounds;
+        Size targetSize = _dockSize.Width > 0 && _dockSize.Height > 0
+            ? _dockSize
+            : new Size(Math.Max(this.MinimumSize.Width, _originalWidth), Math.Max(this.MinimumSize.Height, _originalHeight));
+
+        if (targetSize.Width <= 0 || targetSize.Height <= 0)
+        {
+            targetSize = new Size(Math.Max(this.MinimumSize.Width, 900), Math.Max(this.MinimumSize.Height, 620));
+        }
+
+        Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+        Point cursorScreen = Cursor.Position;
+
+        float xRatio = startBounds.Width > 0 ? (float)_dragStartFormPoint.X / startBounds.Width : 0.5f;
+        float yRatio = startBounds.Height > 0 ? (float)_dragStartFormPoint.Y / startBounds.Height : 0.0f;
+
+        int targetX = cursorScreen.X - (int)Math.Round(targetSize.Width * xRatio);
+        int targetY = cursorScreen.Y - (int)Math.Round(targetSize.Height * yRatio);
+
+        targetX = Math.Max(workingArea.Left, Math.Min(targetX, workingArea.Right - targetSize.Width));
+        targetY = Math.Max(workingArea.Top, Math.Min(targetY, workingArea.Bottom - targetSize.Height));
+
+        Rectangle targetBounds = new Rectangle(targetX, targetY, targetSize.Width, targetSize.Height);
+
+        Action completeRestore = () =>
+        {
+            this.Bounds = targetBounds;
+            _originalWidth = targetBounds.Width;
+            _originalHeight = targetBounds.Height;
+            _dockSize = targetBounds.Size;
+            _dockLocation = targetBounds.Location;
+            _formLeftPosition = targetBounds.X;
+            _triggerX = targetBounds.X;
+            _triggerY = targetBounds.Y;
+            UpdateTriggerArea();
+
+            _statusLabel.Text = "フルスクリーンドラッグを解除しました";
+
+            Point completionCursor = Cursor.Position;
+            _dragStartScreenPoint = completionCursor;
+            _dragStartFormPoint = this.PointToClient(completionCursor);
+            _dragStartPoint = _headerPanel != null
+                ? _headerPanel.PointToClient(completionCursor)
+                : _dragStartFormPoint;
+
+            _isFullScreenDragRestoreInProgress = false;
+        };
+
+        _isFullScreen = false;
+        UpdateFullScreenButtonAppearance();
+        _headerPanel.Visible = true;
+        _dockPosition = DockPosition.None;
+        SetManualUndockState(true);
+
+        _isFullScreenDragRestoreInProgress = true;
+
+        if (startBounds == targetBounds)
+        {
+            completeRestore();
+            return;
+        }
+
+        _animationEngine.Start(
+            progress =>
+            {
+                int width = startBounds.Width + (int)((targetBounds.Width - startBounds.Width) * progress);
+                int height = startBounds.Height + (int)((targetBounds.Height - startBounds.Height) * progress);
+                int x = startBounds.X + (int)((targetBounds.X - startBounds.X) * progress);
+                int y = startBounds.Y + (int)((targetBounds.Y - startBounds.Y) * progress);
+                this.Bounds = new Rectangle(x, y, width, height);
+            },
+            () =>
+            {
+                completeRestore();
+            });
     }
 
     private void SetManualUndockState(bool isUndocked)
@@ -3639,7 +3785,11 @@ namespace MetroUI
         [System.ComponentModel.Browsable(false)]
         public int TimelineRequiredHeight
         {
-            get { return _timelineRect.Bottom + 20; }
+            get
+            {
+                int labelHeight = GetTimelineLabelHeight();
+                return _timelineRect.Bottom + 12 + labelHeight + 20;
+            }
         }
 
         #endregion
@@ -3987,7 +4137,7 @@ namespace MetroUI
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            
+
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
@@ -3999,9 +4149,17 @@ namespace MetroUI
             }
 
             // 背景矩形
+            int backgroundHeight = Height;
+            if (_showTimeline)
+            {
+                int labelHeight = GetTimelineLabelHeight();
+                int timelineBottom = _timelineRect.Bottom + 12 + labelHeight + 20;
+                backgroundHeight = Math.Min(Height, Math.Max(timelineBottom, _nextTaskRect.Bottom + 20));
+            }
+
             using (SolidBrush brush = new SolidBrush(Color.FromArgb(20, MetroColors.Primary)))
             {
-                DrawingUtils.FillRoundedRectangle(g, brush, new Rectangle(0, 0, Width, Height), 10);
+                DrawingUtils.FillRoundedRectangle(g, brush, new Rectangle(0, 0, Width, backgroundHeight), 10);
             }
 
             // 直線タイムライン描画
@@ -4252,6 +4410,15 @@ namespace MetroUI
                         }
                     }
                 }
+            }
+        }
+
+        private int GetTimelineLabelHeight()
+        {
+            using (Font tickFont = new Font(MetroFont.FontFamily, 7f, FontStyle.Regular))
+            {
+                Size textSize = TextRenderer.MeasureText("00/00", tickFont);
+                return Math.Max(0, (int)Math.Ceiling((double)textSize.Height));
             }
         }
 
@@ -5282,6 +5449,40 @@ namespace MetroUI
             }
         }
 
+        private void UpdateMemoLayout()
+        {
+            int maxPageWidth = Math.Max(20, Width - 20);
+            int targetWidth = Width - 100;
+            if (targetWidth <= 0)
+                targetWidth = maxPageWidth;
+            int pageWidth = Math.Min(maxPageWidth, Math.Max(200, targetWidth));
+
+            int maxPageHeight = Math.Max(20, Height - 20);
+            int targetHeight = Height - 100;
+            if (targetHeight <= 0)
+                targetHeight = maxPageHeight;
+            int pageHeight = Math.Min(maxPageHeight, Math.Max(200, targetHeight));
+
+            int pageX = Math.Max(10, (Width - pageWidth) / 2);
+            int pageY = Math.Max(10, (Height - pageHeight) / 2);
+
+            _memoPageRect = new Rectangle(pageX, pageY, pageWidth, pageHeight);
+            _memoCloseButtonRect = new Rectangle(
+                _memoPageRect.Right - 30,
+                _memoPageRect.Y + 10,
+                20, 20);
+
+            if (_memoTextBox != null)
+            {
+                _memoTextBox.Location = new Point(
+                    _memoPageRect.X + 20,
+                    _memoPageRect.Y + 40);
+                _memoTextBox.Size = new Size(
+                    Math.Max(40, _memoPageRect.Width - 40),
+                    Math.Max(40, _memoPageRect.Height - 60));
+            }
+        }
+
         /// <summary>
         /// メモページを表示する
         /// </summary>
@@ -5290,9 +5491,9 @@ namespace MetroUI
             _selectedTaskForMemo = task;
             _selectedSubTaskForMemo = subTask;
             _showMemoPage = true;
-            
+
             string currentMemo = subTask != null ? subTask.Memo : task.Memo;
-            
+
             // メモテキストボックスの作成
             if (_memoTextBox == null)
             {
@@ -5303,25 +5504,17 @@ namespace MetroUI
                 _memoTextBox.Font = new Font(MetroFont.FontFamily, 10f);
                 this.Controls.Add(_memoTextBox);
             }
-            
+
             _memoTextBox.Text = currentMemo;
-            
-            // メモページの位置とサイズ
-            _memoPageRect = new Rectangle(50, 50, Width - 100, Height - 100);
-            _memoCloseButtonRect = new Rectangle(
-                _memoPageRect.Right - 30, 
-                _memoPageRect.Y + 10, 
-                20, 20);
-                
-            _memoTextBox.Location = new Point(
-                _memoPageRect.X + 20,
-                _memoPageRect.Y + 40);
-            _memoTextBox.Size = new Size(
-                _memoPageRect.Width - 40,
-                _memoPageRect.Height - 60);
-            _memoTextBox.Visible = true;
-            _memoTextBox.BringToFront();
-            
+
+            UpdateMemoLayout();
+
+            if (_memoTextBox != null)
+            {
+                _memoTextBox.Visible = true;
+                _memoTextBox.BringToFront();
+            }
+
             UpdateDateHeader();
             Invalidate();
         }
@@ -5773,6 +5966,16 @@ namespace MetroUI
         {
             base.OnResize(e);
             CalculateRectangles();
+            if (_showMemoPage)
+            {
+                UpdateMemoLayout();
+                if (_memoTextBox != null)
+                {
+                    _memoTextBox.Visible = true;
+                    _memoTextBox.BringToFront();
+                }
+                Invalidate();
+            }
         }
 
         protected override void Dispose(bool disposing)
